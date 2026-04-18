@@ -39,7 +39,15 @@ def leer_reporte_consolidado(servicio, id_carpeta_destino, nombre_archivo):
         done = False
         while not done:
             _, done = downloader.next_chunk()
-        return json.loads(fh.getvalue().decode('utf-8'))
+        
+        # BLINDAJE DE FORMATO: Asegurar que siempre sea una lista
+        data = json.loads(fh.getvalue().decode('utf-8'))
+        if isinstance(data, dict):
+            return [data]
+        elif isinstance(data, list):
+            return data
+        else:
+            return []
     except Exception: return []
 
 def guardar_reporte_consolidado(servicio, datos, nombre_archivo, id_carpeta_destino):
@@ -56,7 +64,7 @@ def guardar_reporte_consolidado(servicio, datos, nombre_archivo, id_carpeta_dest
 
 # --- 3. INTERFAZ ---
 st.set_page_config(page_title="D&D Asesores", layout="wide", page_icon="🛡️")
-st.title("🛡️ Sistema de Auditoría v5.5")
+st.title("🛡️ Sistema de Auditoría v5.6")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
@@ -84,14 +92,10 @@ with tabs[0]:
                 id_mes_orig = buscar_o_crear_carpeta(servicio, mes_nombre, buscar_o_crear_carpeta(servicio, anio_sel, root_id))
                 historial = leer_reporte_consolidado(servicio, ID_CONFIG_DIR, nombre_reporte)
                 
-                # CORRECCIÓN DE ERROR AQUÍ (BLINDADO)
                 nombres_auditados = []
                 for r in historial:
                     if isinstance(r, dict):
-                        # Atrapa tanto "poliza" como "Póliza" o ignora si no existe
                         nombres_auditados.append(r.get('poliza', r.get('Póliza', '')))
-                    else:
-                        nombres_auditados.append(str(r))
                 
                 res = servicio.files().list(q=f"'{id_mes_orig}' in parents and mimeType='application/pdf' and trashed=false", fields="files(name)", supportsAllDrives=True).execute()
                 pdf_en_drive = res.get('files', [])
@@ -131,7 +135,6 @@ with tabs[0]:
 with tabs[1]:
     st.subheader(f"Estatus del Lote: `{nombre_reporte}`")
     
-    # BOTÓN PARA REFRESCAR MONITOR SIN NECESIDAD DE ESCANEAR
     if st.button("🔄 Refrescar Métricas del Mes"):
         servicio = obtener_servicio_drive()
         if servicio and root_id:
@@ -166,12 +169,19 @@ with tabs[1]:
 
 # --- TAB 3: REPORTE ---
 with tabs[2]:
-    if 'lote_historial' in st.session_state and st.session_state['lote_historial']:
-        df = pd.DataFrame(st.session_state['lote_historial'])
+    datos_reporte = st.session_state.get('lote_historial', [])
+    
+    # DOBLE BLINDAJE PARA PANDAS
+    if isinstance(datos_reporte, dict):
+        datos_reporte = [datos_reporte]
+    elif not isinstance(datos_reporte, list):
+        datos_reporte = []
+
+    if datos_reporte:
+        df = pd.DataFrame(datos_reporte)
         st.dataframe(df, use_container_width=True)
         c1, c2 = st.columns(2)
-        c1.download_button("📥 Descargar JSON", json.dumps(st.session_state['lote_historial'], indent=4), nombre_reporte, "application/json")
+        c1.download_button("📥 Descargar JSON", json.dumps(datos_reporte, indent=4), nombre_reporte, "application/json")
         c2.download_button("📥 Descargar CSV", df.to_csv(index=False), nombre_reporte.replace(".json", ".csv"), "text/csv")
     else:
         st.warning("No hay datos auditados para mostrar.")
-        
