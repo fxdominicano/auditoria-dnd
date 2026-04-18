@@ -55,15 +55,15 @@ def guardar_reporte_consolidado(servicio, datos, nombre_archivo, id_carpeta_dest
     except Exception: return False
 
 # --- 3. INTERFAZ ---
-st.set_page_config(page_title="D&D Asesores - Auditoría Pro", layout="wide", page_icon="🛡️")
-st.title("🛡️ Sistema de Auditoría v5.4")
+st.set_page_config(page_title="D&D Asesores", layout="wide", page_icon="🛡️")
+st.title("🛡️ Sistema de Auditoría v5.5")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
 
 with st.sidebar:
     st.header("⚙️ Configuración")
-    root_id = st.text_input("ID Carpeta Pólizas (QNAP)", value=st.secrets.get("DRIVE_FOLDER_ID", ""), type="password")
+    root_id = st.text_input("ID Carpeta Pólizas", value=st.secrets.get("DRIVE_FOLDER_ID", ""), type="password")
     tasa_usd = st.number_input("Tasa USD", value=60.15)
     st.info(f"📍 Santiago, RD\n📅 ({datetime.datetime.now().strftime('%d/%m/%Y')})")
 
@@ -73,17 +73,25 @@ mes_idx = c2.selectbox("Mes", range(1, 13), index=datetime.datetime.now().month-
 mes_nombre = MESES_DICT[str(mes_idx)]
 
 nombre_reporte = f"job_{anio_sel}_{str(mes_idx).zfill(2)}.json"
-tabs = st.tabs(["🚀 Ejecución", "📊 Monitor de Lote", "🏆 Reporte Final"])
+tabs = st.tabs(["🚀 Ejecución", "📊 Monitor", "🏆 Reporte Final"])
 
 # --- TAB 1: LANZAMIENTO ---
 with tabs[0]:
     if st.button("🔍 ESCANEAR PÓLIZAS"):
         servicio = obtener_servicio_drive()
         if servicio and root_id:
-            with st.spinner("Analizando carpetas..."):
+            with st.spinner("Analizando..."):
                 id_mes_orig = buscar_o_crear_carpeta(servicio, mes_nombre, buscar_o_crear_carpeta(servicio, anio_sel, root_id))
                 historial = leer_reporte_consolidado(servicio, ID_CONFIG_DIR, nombre_reporte)
-                nombres_auditados = [r['poliza'] for r in historial]
+                
+                # CORRECCIÓN DE ERROR AQUÍ (BLINDADO)
+                nombres_auditados = []
+                for r in historial:
+                    if isinstance(r, dict):
+                        # Atrapa tanto "poliza" como "Póliza" o ignora si no existe
+                        nombres_auditados.append(r.get('poliza', r.get('Póliza', '')))
+                    else:
+                        nombres_auditados.append(str(r))
                 
                 res = servicio.files().list(q=f"'{id_mes_orig}' in parents and mimeType='application/pdf' and trashed=false", fields="files(name)", supportsAllDrives=True).execute()
                 pdf_en_drive = res.get('files', [])
@@ -93,7 +101,7 @@ with tabs[0]:
                 st.session_state['lote_historial'] = historial
                 st.session_state['pendientes'] = pendientes
                 st.session_state['total_pdfs'] = len(pdf_en_drive)
-                st.success(f"Escaneo listo. {len(pendientes)} pólizas nuevas detectadas.")
+                st.success(f"Listo. {len(pendientes)} pólizas nuevas de {len(pdf_en_drive)} totales.")
 
     if 'pendientes' in st.session_state and st.session_state['pendientes']:
         if st.button("🚀 INICIAR PROCESAMIENTO"):
@@ -105,33 +113,45 @@ with tabs[0]:
             for i, file in enumerate(st.session_state['pendientes']):
                 status_text.markdown(f"**Auditando:** `{file['name']}`")
                 time.sleep(1.2)
-                
-                nuevo_dato = {
+                resultados_actuales.append({
                     "poliza": file['name'], 
                     "status": "Finalizado", 
                     "fecha": f"({datetime.datetime.now().strftime('%d/%m/%Y')})"
-                }
-                resultados_actuales.append(nuevo_dato)
+                })
                 progreso.progress((i + 1) / len(st.session_state['pendientes']))
             
-            # Intento de guardado
             exito = guardar_reporte_consolidado(servicio, resultados_actuales, nombre_reporte, ID_CONFIG_DIR)
             st.session_state['lote_historial'] = resultados_actuales
             st.session_state['pendientes'] = []
             
             if exito: st.success("🎉 Datos guardados en Drive.")
-            else: st.warning("⚠️ Guardado en memoria. Descargue el archivo en la pestaña Reporte.")
+            else: st.warning("⚠️ Descargue el archivo en la pestaña Reporte y súbalo a Drive.")
 
-# --- TAB 2: MONITOR DE PRODUCTIVIDAD ---
+# --- TAB 2: MONITOR INDEPENDIENTE ---
 with tabs[1]:
     st.subheader(f"Estatus del Lote: `{nombre_reporte}`")
     
+    # BOTÓN PARA REFRESCAR MONITOR SIN NECESIDAD DE ESCANEAR
+    if st.button("🔄 Refrescar Métricas del Mes"):
+        servicio = obtener_servicio_drive()
+        if servicio and root_id:
+            with st.spinner("Consultando Drive..."):
+                id_mes_orig = buscar_o_crear_carpeta(servicio, mes_nombre, buscar_o_crear_carpeta(servicio, anio_sel, root_id))
+                historial = leer_reporte_consolidado(servicio, ID_CONFIG_DIR, nombre_reporte)
+                
+                if id_mes_orig:
+                    res = servicio.files().list(q=f"'{id_mes_orig}' in parents and mimeType='application/pdf' and trashed=false", fields="files(id)", supportsAllDrives=True).execute()
+                    st.session_state['total_pdfs'] = len(res.get('files', []))
+                else:
+                    st.session_state['total_pdfs'] = 0
+                
+                st.session_state['lote_historial'] = historial
+
     total = st.session_state.get('total_pdfs', 0)
     auditados = len(st.session_state.get('lote_historial', []))
     
     if total > 0:
-        porcentaje = int((auditados / total) * 100)
-        
+        porcentaje = int((auditados / total) * 100) if total > 0 else 0
         m1, m2, m3 = st.columns(3)
         m1.metric("Total en QNAP", total)
         m2.metric("Auditados", auditados)
@@ -139,21 +159,19 @@ with tabs[1]:
         
         st.write("### Nivel de Avance")
         st.progress(porcentaje / 100)
-        
         if porcentaje == 100:
-            st.balloons()
             st.success("¡Mes completado al 100%!")
     else:
-        st.info("Escanee las pólizas en la primera pestaña para ver las métricas.")
+        st.info("Pulse 'Refrescar Métricas' para ver los datos directamente.")
 
 # --- TAB 3: REPORTE ---
 with tabs[2]:
     if 'lote_historial' in st.session_state and st.session_state['lote_historial']:
         df = pd.DataFrame(st.session_state['lote_historial'])
         st.dataframe(df, use_container_width=True)
-        
         c1, c2 = st.columns(2)
         c1.download_button("📥 Descargar JSON", json.dumps(st.session_state['lote_historial'], indent=4), nombre_reporte, "application/json")
-        c2.download_button("📥 Descargar CSV (Excel)", df.to_csv(index=False), nombre_reporte.replace(".json", ".csv"), "text/csv")
+        c2.download_button("📥 Descargar CSV", df.to_csv(index=False), nombre_reporte.replace(".json", ".csv"), "text/csv")
     else:
         st.warning("No hay datos auditados para mostrar.")
+        
