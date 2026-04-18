@@ -5,93 +5,113 @@ import datetime
 import json
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
+from googleapiclient.http import MediaInMemoryUpload
 
-# --- 1. CONEXIÓN REAL ---
+# --- 1. CONFIGURACIÓN Y CREDENCIALES ---
+ID_CONFIG_DIR = "15OPQmuf0CpD4MxYHFgD6Nv307Fd7POWt"
+
 def obtener_servicio_drive():
     try:
         info_llave = json.loads(st.secrets["GCP_SERVICE_ACCOUNT"])
         creds = service_account.Credentials.from_service_account_info(info_llave)
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"Error de acceso: Revise los Secrets. {e}")
+        st.error(f"Error de acceso a Drive: {e}")
         return None
 
-def buscar_id(servicio, nombre, id_padre):
+# --- 2. FUNCIONES DE CARPETAS Y ARCHIVOS ---
+def buscar_o_crear_carpeta(servicio, nombre, id_padre):
     query = f"name = '{nombre}' and '{id_padre}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res = servicio.files().list(q=query, fields="files(id)").execute()
     items = res.get('files', [])
-    return items[0]['id'] if items else None
+    if items:
+        return items[0]['id']
+    else:
+        meta = {'name': nombre, 'parents': [id_padre], 'mimeType': 'application/vnd.google-apps.folder'}
+        folder = servicio.files().create(body=meta, fields='id').execute()
+        return folder.get('id')
 
-def listar_pdfs_reales(servicio, id_carpeta):
-    query = f"'{id_carpeta}' in parents and mimeType = 'application/pdf' and trashed = false"
-    res = servicio.files().list(q=query, fields="files(id, name)").execute()
-    return res.get('files', [])
+def archivo_ya_auditado(servicio, nombre_pdf, id_carpeta_mes):
+    """Verifica si ya existe un .json con el nombre de la póliza"""
+    nombre_json = nombre_pdf.replace(".pdf", ".json")
+    query = f"name = '{nombre_json}' and '{id_carpeta_mes}' in parents and trashed = false"
+    res = servicio.files().list(q=query, fields="files(id)").execute()
+    return len(res.get('files', [])) > 0
 
-# --- 2. CONFIGURACIÓN ---
-st.set_page_config(page_title="D&D Asesores - Auditoría", layout="wide")
-st.title("🛡️ Motor de Auditoría Inteligente")
+def guardar_json_auditado(servicio, datos, nombre_pdf, id_carpeta_mes):
+    nombre_json = nombre_pdf.replace(".pdf", ".json")
+    media = MediaInMemoryUpload(json.dumps(datos, indent=4).encode('utf-8'), mimetype='application/json')
+    meta = {'name': nombre_json, 'parents': [id_carpeta_mes]}
+    servicio.files().create(body=meta, media_body=media).execute()
+
+# --- 3. INTERFAZ ---
+st.set_page_config(page_title="D&D Asesores - Auditoría Inteligente", layout="wide")
+st.title("🛡️ Auditoría v4.8: Control de Duplicados")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
 
 with st.sidebar:
     st.header("⚙️ Configuración")
-    root_id = st.text_input("ID Carpeta Raíz", value=st.secrets.get("DRIVE_FOLDER_ID", ""), type="password")
+    root_id = st.text_input("ID Carpeta Pólizas (QNAP)", value=st.secrets.get("DRIVE_FOLDER_ID", ""), type="password")
     tasa_usd = st.number_input("Tasa USD", value=60.15)
-    st.divider()
-    st.info("Santiago, RD")
+    st.info("Estatus: Resiliente")
 
-col1, col2 = st.columns(2)
-anio = col1.selectbox("Año Fiscal", ["2025", "2026", "2027"], index=1)
-mes_idx = col2.selectbox("Mes de Auditoría", range(1, 13), index=datetime.datetime.now().month-1, format_func=lambda x: MESES_DICT[str(x)])
+c1, c2 = st.columns(2)
+anio_sel = c1.selectbox("Año", ["2025", "2026", "2027"], index=1)
+mes_idx = c2.selectbox("Mes", range(1, 13), index=datetime.datetime.now().month-1, format_func=lambda x: MESES_DICT[str(x)])
 mes_nombre = MESES_DICT[str(mes_idx)]
 
-tabs = st.tabs(["🚀 Lanzar Auditoría", "📊 Monitor de Lotes", "🏆 Reporte e Ingresos"])
+tabs = st.tabs(["🚀 Auditoría", "📊 Monitor", "🏆 Reporte"])
 
-# --- TAB 1: LANZAMIENTO REAL ---
 with tabs[0]:
-    if st.button("🔍 ESCANEAR CARPETA REAL"):
+    if st.button("🔍 ESCANEAR PÓLIZAS"):
         servicio = obtener_servicio_drive()
         if servicio and root_id:
-            id_anio = buscar_id(servicio, anio, root_id)
-            if id_anio:
-                id_mes = buscar_id(servicio, mes_nombre, id_anio)
-                if id_mes:
-                    archivos = listar_pdfs_reales(servicio, id_mes)
-                    st.session_state['lote_real'] = archivos
-                    st.success(f"Conexión exitosa: {len(archivos)} pólizas encontradas.")
-                else: st.error(f"No existe carpeta: {mes_nombre}")
-            else: st.error(f"No existe carpeta: {anio}")
+            # 1. Navegar a carpetas de origen (QNAP)
+            id_anio = buscar_o_crear_carpeta(servicio, anio_sel, root_id) # Uso buscar_o_crear por seguridad
+            id_mes = buscar_o_crear_carpeta(servicio, mes_nombre, id_anio)
+            
+            # 2. Navegar/Crear carpetas de destino (Config_Auditoria_DyD)
+            id_dest_anio = buscar_o_crear_carpeta(servicio, anio_sel, ID_CONFIG_DIR)
+            id_dest_mes = buscar_o_crear_carpeta(servicio, mes_nombre, id_dest_anio)
+            
+            # 3. Listar archivos
+            query = f"'{id_mes}' in parents and mimeType = 'application/pdf' and trashed = false"
+            res = servicio.files().list(q=query, fields="files(id, name)").execute()
+            lista_raw = res.get('files', [])
+            
+            # 4. Filtrar solo los que NO han sido auditados
+            pendientes = []
+            for f in lista_raw:
+                if not archivo_ya_auditado(servicio, f['name'], id_dest_mes):
+                    pendientes.append(f)
+            
+            st.session_state['pendientes'] = pendientes
+            st.session_state['id_destino'] = id_dest_mes
+            st.success(f"Escaneo listo. Total: {len(lista_raw)} | Pendientes: {len(pendientes)}")
 
-    if 'lote_real' in st.session_state and st.session_state['lote_real']:
-        st.write("### Pólizas detectadas en Drive")
-        st.dataframe(pd.DataFrame(st.session_state['lote_real'])[['name']], use_container_width=True)
+    if 'pendientes' in st.session_state and st.session_state['pendientes']:
+        st.write("### Pólizas nuevas por procesar")
+        st.dataframe(pd.DataFrame(st.session_state['pendientes'])[['name']])
         
-        if st.button("🚀 INICIAR PROCESAMIENTO BATCH"):
+        if st.button("🚀 PROCESAR PENDIENTES"):
+            servicio = obtener_servicio_drive()
             progreso = st.progress(0)
             status = st.empty()
-            for i, file in enumerate(st.session_state['lote_real']):
-                status.markdown(f"**Procesando:** `{file['name']}`")
-                time.sleep(1) # Aquí va la lógica de Gemini
-                progreso.progress((i + 1) / len(st.session_state['lote_real']))
-            st.success("Auditoría finalizada.")
-
-# --- TAB 2: MONITOR REAL (SIN EJEMPLOS) ---
-with tabs[1]:
-    st.subheader(f"Estatus para {mes_nombre} {anio}")
-    conteo = len(st.session_state.get('lote_real', []))
-    
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Estado", "ACTIVO" if conteo > 0 else "INACTIVO")
-    m2.metric("Pólizas en Carpeta", conteo)
-    m3.metric("Última Actualización", datetime.datetime.now().strftime("%H:%M"))
-
-    if conteo == 0:
-        st.info("No hay datos reales. Use el botón de 'Escanear' en la primera pestaña.")
-
-# --- TAB 3: REPORTE REAL ---
-with tabs[2]:
-    if 'lote_real' in st.session_state and len(st.session_state['lote_real']) > 0:
-        st.write("Aquí se mostrarán los cálculos de comisión para las pólizas detectadas.")
-    else:
-        st.warning("Escanee una carpeta con archivos para generar el reporte.")
+            
+            for i, file in enumerate(st.session_state['pendientes']):
+                status.markdown(f"**Analizando:** `{file['name']}`")
+                
+                # --- Simulación de Análisis de IA ---
+                time.sleep(1)
+                resultado_ficticio = {"poliza": file['name'], "status": "Auditado", "fecha": str(datetime.datetime.now())}
+                # ------------------------------------
+                
+                # Guardar el JSON en la carpeta correspondiente
+                guardar_json_auditado(servicio, resultado_ficticio, file['name'], st.session_state['id_destino'])
+                
+                progreso.progress((i + 1) / len(st.session_state['pendientes']))
+            
+            st.success("Lote completado. Todos los reportes guardados en Config_Auditoria_DyD.")
+            st.session_state['pendientes'] = [] # Limpiar lista tras éxito
