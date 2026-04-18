@@ -4,7 +4,7 @@ import time
 import datetime
 import json
 import io
-import re  # <--- IMPORTANTE: Librería para extraer el JSON de forma segura
+import re
 import google.generativeai as genai
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
@@ -12,21 +12,27 @@ from googleapiclient.http import MediaInMemoryUpload, MediaIoBaseDownload
 
 # --- 1. CONFIGURACIÓN Y CREDENCIALES ---
 ID_CONFIG_DIR = "15OPQmuf0CpD4MxYHFgD6Nv307Fd7POWt"
-SCOPES = ['[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)']
+SCOPES = ['https://www.googleapis.com/auth/drive']
 
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 def obtener_servicio_drive():
     try:
+        # Cargamos el JSON de los secrets
         info_llave = json.loads(st.secrets["GCP_SERVICE_ACCOUNT"])
+        
+        # BLINDAJE DE CREDENCIALES: Reparamos los saltos de línea corruptos por Streamlit
+        info_llave["private_key"] = info_llave["private_key"].replace("\\n", "\n")
+        
         creds = service_account.Credentials.from_service_account_info(info_llave).with_scopes(SCOPES)
         return build('drive', 'v3', credentials=creds)
-    except Exception: return None
+    except Exception as e:
+        st.error(f"Error crítico al leer las credenciales en Streamlit Secrets: {e}")
+        return None
 
 # --- 2. GESTIÓN DE ARCHIVOS (MODO LECTURA ESTRICTA) ---
 def buscar_carpeta(servicio, nombre, id_padre):
-    """SOLO BUSCA. Ya no intenta crear para evitar el Error 403 de cuota."""
     query = f"name = '{nombre}' and '{id_padre}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res = servicio.files().list(q=query, fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
     items = res.get('files', [])
@@ -59,9 +65,8 @@ def guardar_job_file(servicio, datos, nombre_archivo):
             meta = {'name': nombre_archivo, 'parents': [ID_CONFIG_DIR]}
             servicio.files().create(body=meta, media_body=media, supportsAllDrives=True).execute()
             return True
-    except Exception as e: 
-        print(f"Error de cuota Drive: {e}") # Queda en el log del servidor
-        return False # AHORA SÍ PASA EL ERROR A LA INTERFAZ
+    except Exception: 
+        return False 
 
 # --- 3. MOTOR IA (EXTRACCIÓN BLINDADA CON REGEX) ---
 def analizar_con_gemini(servicio, file_id, file_name):
@@ -99,19 +104,18 @@ def analizar_con_gemini(servicio, file_id, file_name):
         """
         response = model.generate_content([{'mime_type': 'application/pdf', 'data': fh.getvalue()}, prompt])
         
-        # BLINDAJE REGEX: Busca el primer corchete/llave y extrae solo lo que parezca JSON
         match = re.search(r'\{.*\}', response.text, re.DOTALL)
         if match:
             return json.loads(match.group(0))
         else:
-            return {"Archivo": file_name, "Estatus": "Error: IA no devolvió JSON reconocible"}
+            return {"Archivo": file_name, "Estatus": "Error: Formato JSON no válido"}
             
     except Exception as e:
         return {"Archivo": file_name, "Estatus": f"Error IA: {str(e)[:30]}"}
 
 # --- 4. INTERFAZ STREAMLIT ---
 st.set_page_config(page_title="D&D Auditoría IA", layout="wide", page_icon="🛡️")
-st.title("🛡️ Auditoría Integral v7.1")
+st.title("🛡️ Auditoría Integral v7.2")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
@@ -132,13 +136,12 @@ with st.sidebar:
 
 tabs = st.tabs(["🚀 Ejecución Batch", "📊 Monitor de Estatus", "🏆 Reporte de Mercado"])
 
-# --- TAB 1: EJECUCIÓN ---
+# --- TAB 1: EJECUCIÓN CON VISTA PREVIA ---
 with tabs[0]:
     if st.button("🔍 ESCANEAR CARPETA"):
         servicio = obtener_servicio_drive()
         if servicio and root_id:
             with st.spinner(f"Escaneando {mes_nombre}..."):
-                # BLINDAJE DE NAVEGACIÓN
                 id_anio = buscar_carpeta(servicio, anio_sel, root_id)
                 if not id_anio:
                     st.error(f"❌ La carpeta del año '{anio_sel}' no existe en tu QNAP.")
@@ -159,9 +162,14 @@ with tabs[0]:
                 st.session_state['lote_historial'] = historial
                 st.session_state['pendientes'] = [f for f in pdfs_nas if f['name'] not in auditados]
                 st.session_state['total_pdfs'] = len(pdfs_nas)
-                st.success(f"Detección: {len(st.session_state['pendientes'])} pólizas nuevas pendientes de auditar.")
+                st.success(f"✅ Detección exitosa: {len(st.session_state['pendientes'])} pólizas listas para auditar.")
 
     if 'pendientes' in st.session_state and st.session_state['pendientes']:
+        # VISTA PREVIA AÑADIDA AQUÍ
+        st.write("### 📄 Vista Previa de Archivos en Cola")
+        df_pendientes = pd.DataFrame([{"Archivos a enviar a Gemini": f['name']} for f in st.session_state['pendientes']])
+        st.dataframe(df_pendientes, use_container_width=True)
+        
         if st.button("🚀 INICIAR AUDITORÍA POR LOTE"):
             servicio = obtener_servicio_drive()
             progreso = st.progress(0)
@@ -178,7 +186,6 @@ with tabs[0]:
                 
                 progreso.progress((i + 1) / len(st.session_state['pendientes']))
             
-            # BLINDAJE DE GUARDADO
             guardado_exitoso = guardar_job_file(servicio, lote_completo, nombre_reporte)
             st.session_state['lote_historial'] = lote_completo
             st.session_state['pendientes'] = []
@@ -186,7 +193,7 @@ with tabs[0]:
             if guardado_exitoso:
                 st.success(f"✅ Batch finalizado. Reporte guardado correctamente en Drive.")
             else:
-                st.error("⚠️ Drive rechazó el guardado (Posible falta de cuota/archivo no existe). ¡Ve a la pestaña Reporte y descarga el CSV AHORA MISMO para no perder los datos!")
+                st.error("⚠️ Drive rechazó el guardado. ¡Ve a la pestaña Reporte y descarga el CSV AHORA MISMO!")
 
 # --- TAB 2: MONITOR ---
 with tabs[1]:
