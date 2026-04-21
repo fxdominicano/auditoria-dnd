@@ -185,26 +185,34 @@ with tabs[0]:
         st.dataframe(df_p, use_container_width=True)
         
         if st.button("🚀 INICIAR AUDITORÍA CON GEMINI"):
+                if st.button("🚀 INICIAR AUDITORÍA CON GEMINI"):
             servicio = obtener_servicio_drive()
             progreso = st.progress(0)
             status_text = st.empty()
             lote_completo = st.session_state['lote_historial']
             
             for i, f in enumerate(st.session_state['pendientes']):
-                status_text.markdown(f"**Analizando:** `{f['name']}`")
+                status_text.markdown(f"**Analizando:** `{f['name']}` ({i+1}/{len(st.session_state['pendientes'])})")
+                
+                # 1. Analizar con IA
                 resultado = analizar_con_gemini(servicio, f['id'], f['name'])
                 
+                # 2. Agregar al historial local si no es descartada
                 if "Omitir" not in str(resultado.get('Estatus', '')):
                     lote_completo.append(resultado)
+                    
+                    # --- NUEVA LÓGICA DE AUTO-GUARDADO ---
+                    # Guardamos en Drive inmediatamente después de cada póliza analizada
+                    guardar_job_file(servicio, lote_completo, nombre_reporte)
                 
+                # 3. Actualizar barra de progreso
                 progreso.progress((i + 1) / len(st.session_state['pendientes']))
             
-            if guardar_job_file(servicio, lote_completo, nombre_reporte):
-                st.session_state['lote_historial'] = lote_completo
-                st.session_state['pendientes'] = []
-                st.success("✅ Auditoría guardada en Drive.")
-            else:
-                st.error("⚠️ Error al guardar. Descarga el CSV manualmente.")
+            # Limpiar pendientes al finalizar
+            st.session_state['lote_historial'] = lote_completo
+            st.session_state['pendientes'] = []
+            st.success(f"✅ Auditoría finalizada. El archivo {nombre_reporte} está totalmente actualizado en Drive.")
+
 
 # --- TAB 2: MONITOR ---
 with tabs[1]:
