@@ -29,8 +29,7 @@ def obtener_servicio_drive():
             creds.refresh(Request())
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"Error de conexión Drive: {e}")
-        return None
+        st.error(f"Error Drive: {e}"); return None
 
 # --- 2. GESTIÓN DE ARCHIVOS ---
 def buscar_carpeta(servicio, nombre, id_padre):
@@ -64,11 +63,9 @@ def guardar_job_file(servicio, datos, nombre_archivo):
             meta = {'name': nombre_archivo, 'parents': [ID_CONFIG_DIR]}
             servicio.files().create(body=meta, media_body=media, supportsAllDrives=True).execute()
         return True
-    except Exception as e:
-        st.error(f"Error guardando en Drive: {e}")
-        return False 
+    except Exception: return False 
 
-# --- 3. MOTOR IA (MANTENIENDO 2.5 FLASH POR ESTABILIDAD) ---
+# --- 3. MOTOR IA (REFRESCADO PARA EVITAR EXTRA DATA) ---
 def analizar_con_gemini(servicio, file_id, file_name):
     try:
         request = servicio.files().get_media(fileId=file_id)
@@ -77,48 +74,40 @@ def analizar_con_gemini(servicio, file_id, file_name):
         done = False
         while not done: _, done = downloader.next_chunk()
         
-        # MODO JSON NATIVO: Fuerza a la IA a no escribir texto extra
         model = genai.GenerativeModel('gemini-2.5-flash') 
-        
         prompt = f"""
         Actúa como un Auditor Senior de Seguros en República Dominicana para D&D Asesores.
+        Extrae datos técnicos del PDF. Si es Factura de Aumento, analiza los nuevos límites.
         
-        TAREA: Extrae datos técnicos del PDF. 
-        Si es una Factura de Aumento, analiza los nuevos límites.
-        
-        CRITERIOS:
-        1. VEHÍCULOS: Si es Seguro Full, extrae Marca, Modelo, Año, Sub-Modelo y estima Valor Mercado RD.
-        2. OTROS RAMOS: Extrae Suma Asegurada y Límites para Incendio, RC, Maquinaria o Fidelidad.
-        
-        RESPONDE ESTRICTAMENTE EN ESTE FORMATO JSON:
+        ESTRUCTURA JSON:
         {{
             "Archivo": "{file_name}",
-            "Ramo": "Vehículos / Incendio / RC / Otros",
-            "Detalle_Objeto": "Descripción",
-            "Sub_Modelo": "Sub-modelo si aplica",
+            "Ramo": "Texto",
+            "Detalle_Objeto": "Texto",
+            "Sub_Modelo": "Texto",
             "Suma_Asegurada_RD": 0,
             "Valor_Mercado_o_Limite": 0,
             "Brecha": 0,
             "Estatus": "Requiere Aumento / Correcto / Omitir - Solo Ley",
-            "Nota_Auditoria": "Explicación breve",
+            "Nota_Auditoria": "Texto breve",
             "Fecha_Analisis": "({datetime.datetime.now().strftime('%d/%m/%Y')})"
         }}
         """
-        
-        # Generación con configuración de MIME TYPE JSON
         response = model.generate_content(
             [{'mime_type': 'application/pdf', 'data': fh.getvalue()}, prompt],
             generation_config={"response_mime_type": "application/json"}
         )
         
-        return json.loads(response.text)
+        # Validación de seguridad: Nos aseguramos de que sea un diccionario
+        resultado = json.loads(response.text)
+        return resultado if isinstance(resultado, dict) else None
             
-    except Exception as e:
-        return {"Archivo": file_name, "Estatus": f"Error IA: {str(e)[:40]}"}
+    except Exception:
+        return {"Archivo": file_name, "Estatus": "Error en procesamiento de archivo"}
 
 # --- 4. INTERFAZ ---
 st.set_page_config(page_title="D&D Auditoría IA", layout="wide", page_icon="🛡️")
-st.title("🛡️ Auditoría Integral v8.0")
+st.title("🛡️ Auditoría Integral v8.1")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
@@ -144,8 +133,7 @@ with t1:
             with st.spinner("Sincronizando..."):
                 id_anio = buscar_carpeta(servicio, anio_sel, root_id)
                 id_mes = buscar_carpeta(servicio, mes_nombre, id_anio) if id_anio else None
-                if not id_mes:
-                    st.error("Carpeta no encontrada."); st.stop()
+                if not id_mes: st.error("Carpeta no encontrada."); st.stop()
                 
                 historial = leer_job_file(servicio, nombre_reporte)
                 auditados = [r.get('Archivo', '') for r in historial if isinstance(r, dict)]
@@ -168,9 +156,15 @@ with t1:
                 status.markdown(f"**Analizando:** `{f['name']}`")
                 res_ia = analizar_con_gemini(servicio, f['id'], f['name'])
                 
-                if "Omitir" not in str(res_ia.get('Estatus', '')):
-                    lote.append(res_ia)
-                    guardar_job_file(servicio, lote, nombre_reporte) # Guardado incremental
+                # --- FIX: VALIDACIÓN DE DICCIONARIO ---
+                if res_ia and isinstance(res_ia, dict):
+                    if "Omitir" not in str(res_ia.get('Estatus', '')):
+                        lote.append(res_ia)
+                        guardar_job_file(servicio, lote, nombre_reporte)
+                else:
+                    # Si falla, guardamos un registro de error para no quedarnos trabados
+                    lote.append({"Archivo": f['name'], "Estatus": "Error: IA devolvió formato inválido"})
+                    guardar_job_file(servicio, lote, nombre_reporte)
                 
                 progreso.progress((i + 1) / len(st.session_state['pendientes']))
             
@@ -180,7 +174,7 @@ with t1:
 with t2:
     if 'total_pdfs' in st.session_state:
         hechos = len(st.session_state.get('lote_historial', []))
-        st.metric("Progreso de Mayo", f"{hechos} de {st.session_state['total_pdfs']}")
+        st.metric("Auditados", f"{hechos} de {st.session_state['total_pdfs']}")
         st.progress(hechos / st.session_state['total_pdfs'])
 
 with t3:
