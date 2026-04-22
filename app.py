@@ -11,34 +11,28 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaInMemoryUpload, MediaIoBaseDownload
 
-# --- 1. CONFIGURACIÓN Y CONSTANTES ---
+# --- 1. CONFIGURACIÓN ---
 ID_CONFIG_DIR = "15OPQmuf0CpD4MxYHFgD6Nv307Fd7POWt"
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
-# Configuración de Gemini
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 def obtener_servicio_drive():
-    """Conecta con Google Drive usando el Token de Héctor Díaz."""
     try:
         if "GOOGLE_USER_TOKEN" not in st.secrets:
-            st.error("⚠️ Falta el secreto 'GOOGLE_USER_TOKEN' en Streamlit.")
+            st.error("⚠️ Configura 'GOOGLE_USER_TOKEN' en los Secrets.")
             return None
-            
         info_token = json.loads(st.secrets["GOOGLE_USER_TOKEN"])
         creds = Credentials.from_authorized_user_info(info_token, SCOPES)
-        
-        # Auto-refresh del token si ha expirado
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"Error de autenticación: {e}")
+        st.error(f"Error de conexión Drive: {e}")
         return None
 
-# --- 2. GESTIÓN DE ARCHIVOS DRIVE ---
+# --- 2. GESTIÓN DE ARCHIVOS ---
 def buscar_carpeta(servicio, nombre, id_padre):
     query = f"name = '{nombre}' and '{id_padre}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res = servicio.files().list(q=query, fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
@@ -48,27 +42,22 @@ def buscar_carpeta(servicio, nombre, id_padre):
 def leer_job_file(servicio, nombre_archivo):
     try:
         query = f"name = '{nombre_archivo}' and '{ID_CONFIG_DIR}' in parents and trashed = false"
-        res = servicio.files().list(q=query, fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+        res = servicio.files().list(q=query, fields="files(id)", supportsAllDrives=True).execute()
         items = res.get('files', [])
         if not items: return []
-        
         request = servicio.files().get_media(fileId=items[0]['id'])
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False
         while not done: _, done = downloader.next_chunk()
-        
-        data = json.loads(fh.getvalue().decode('utf-8'))
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
+        return json.loads(fh.getvalue().decode('utf-8'))
+    except Exception: return []
 
 def guardar_job_file(servicio, datos, nombre_archivo):
     try:
         media = MediaInMemoryUpload(json.dumps(datos, indent=4, ensure_ascii=False).encode('utf-8'), mimetype='application/json')
         query = f"name = '{nombre_archivo}' and '{ID_CONFIG_DIR}' in parents"
         res = servicio.files().list(q=query, supportsAllDrives=True).execute().get('files', [])
-        
         if res:
             servicio.files().update(fileId=res[0]['id'], media_body=media, supportsAllDrives=True).execute()
         else:
@@ -76,10 +65,10 @@ def guardar_job_file(servicio, datos, nombre_archivo):
             servicio.files().create(body=meta, media_body=media, supportsAllDrives=True).execute()
         return True
     except Exception as e:
-        st.error(f"Error al guardar incrementalmente: {e}")
+        st.error(f"Error guardando en Drive: {e}")
         return False 
 
-# --- 3. MOTOR IA (GEMINI 2.5 FLASH) ---
+# --- 3. MOTOR IA (MANTENIENDO 2.5 FLASH POR ESTABILIDAD) ---
 def analizar_con_gemini(servicio, file_id, file_name):
     try:
         request = servicio.files().get_media(fileId=file_id)
@@ -88,140 +77,114 @@ def analizar_con_gemini(servicio, file_id, file_name):
         done = False
         while not done: _, done = downloader.next_chunk()
         
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        # MODO JSON NATIVO: Fuerza a la IA a no escribir texto extra
+        model = genai.GenerativeModel('gemini-2.5-flash') 
+        
         prompt = f"""
         Actúa como un Auditor Senior de Seguros en República Dominicana para D&D Asesores.
         
-        CRITERIOS TÉCNICOS:
-        1. VEHÍCULOS: Verifica si tiene cobertura de 'Daños Propios' (Seguro Full).
-           - Si NO tiene, marca Estatus: "Omitir - Solo Ley".
-           - Si ES FULL: Extrae Marca, Modelo, Año y SUB-MODELO (XLE, LE, SE, Platinum, etc). 
-             Estima valor de mercado en RD (media de 5-8 vehículos similares).
-        2. OTROS RAMOS: Para Incendio, RC, Maquinaria, Fidelidad, extrae Suma Asegurada y Límites.
+        TAREA: Extrae datos técnicos del PDF. 
+        Si es una Factura de Aumento, analiza los nuevos límites.
         
-        RESPONDE ESTRICTAMENTE EN FORMATO JSON:
+        CRITERIOS:
+        1. VEHÍCULOS: Si es Seguro Full, extrae Marca, Modelo, Año, Sub-Modelo y estima Valor Mercado RD.
+        2. OTROS RAMOS: Extrae Suma Asegurada y Límites para Incendio, RC, Maquinaria o Fidelidad.
+        
+        RESPONDE ESTRICTAMENTE EN ESTE FORMATO JSON:
         {{
             "Archivo": "{file_name}",
             "Ramo": "Vehículos / Incendio / RC / Otros",
-            "Detalle_Objeto": "Marca/Modelo/Año o Riesgo principal",
-            "Sub_Modelo": "Sólo para vehículos",
+            "Detalle_Objeto": "Descripción",
+            "Sub_Modelo": "Sub-modelo si aplica",
             "Suma_Asegurada_RD": 0,
             "Valor_Mercado_o_Limite": 0,
             "Brecha": 0,
             "Estatus": "Requiere Aumento / Correcto / Omitir - Solo Ley",
             "Nota_Auditoria": "Explicación breve",
-            "Fecha_Analisis": "{datetime.datetime.now().strftime('%d/%m/%Y')}"
+            "Fecha_Analisis": "({datetime.datetime.now().strftime('%d/%m/%Y')})"
         }}
         """
-        response = model.generate_content([{'mime_type': 'application/pdf', 'data': fh.getvalue()}, prompt])
         
-        match = re.search(r'\{.*\}', response.text, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))
-        else:
-            return {"Archivo": file_name, "Estatus": "Error: IA no generó JSON válido"}
+        # Generación con configuración de MIME TYPE JSON
+        response = model.generate_content(
+            [{'mime_type': 'application/pdf', 'data': fh.getvalue()}, prompt],
+            generation_config={"response_mime_type": "application/json"}
+        )
+        
+        return json.loads(response.text)
             
     except Exception as e:
-        return {"Archivo": file_name, "Estatus": f"Error IA: {str(e)[:50]}"}
+        return {"Archivo": file_name, "Estatus": f"Error IA: {str(e)[:40]}"}
 
-# --- 4. INTERFAZ STREAMLIT ---
+# --- 4. INTERFAZ ---
 st.set_page_config(page_title="D&D Auditoría IA", layout="wide", page_icon="🛡️")
-st.title("🛡️ Auditoría D&D Asesores v7.8")
+st.title("🛡️ Auditoría Integral v8.0")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
 
 with st.container(border=True):
-    st.subheader("📅 Selección de Periodo")
+    st.subheader("📅 Periodo de Auditoría")
     col1, col2 = st.columns(2)
-    anio_sel = col1.selectbox("Año Fiscal", ["2025", "2026", "2027"], index=1)
-    mes_idx = col2.selectbox("Mes de Auditoría", range(1, 13), index=datetime.datetime.now().month-1, format_func=lambda x: MESES_DICT[str(x)])
-    
+    anio_sel = col1.selectbox("Año", ["2025", "2026", "2027"], index=1)
+    mes_idx = col2.selectbox("Mes", range(1, 13), index=datetime.datetime.now().month-1, format_func=lambda x: MESES_DICT[str(x)])
     mes_nombre = MESES_DICT[str(mes_idx)]
     nombre_reporte = f"job_{anio_sel}_{str(mes_idx).zfill(2)}.json"
 
 with st.sidebar:
-    st.header("⚙️ Configuración")
-    root_id = st.text_input("ID Carpeta Pólizas QNAP", value=st.secrets.get("DRIVE_FOLDER_ID", ""), type="password")
-    st.info(f"💾 Reportes en: `{ID_CONFIG_DIR}`")
+    st.header("⚙️ NAS")
+    root_id = st.text_input("ID Carpeta QNAP", value=st.secrets.get("DRIVE_FOLDER_ID", ""), type="password")
 
-tabs = st.tabs(["🚀 Ejecución Batch", "📊 Monitor", "🏆 Reporte de Mercado"])
+t1, t2, t3 = st.tabs(["🚀 Ejecución", "📊 Monitor", "🏆 Reporte"])
 
-# --- TAB 1: EJECUCIÓN (GUARDADO INCREMENTAL) ---
-with tabs[0]:
-    if st.button("🔍 ESCANEAR PÓLIZAS"):
+with t1:
+    if st.button("🔍 ESCANEAR QNAP"):
         servicio = obtener_servicio_drive()
         if servicio and root_id:
-            with st.spinner(f"Escaneando {mes_nombre}..."):
+            with st.spinner("Sincronizando..."):
                 id_anio = buscar_carpeta(servicio, anio_sel, root_id)
                 id_mes = buscar_carpeta(servicio, mes_nombre, id_anio) if id_anio else None
-                
                 if not id_mes:
-                    st.error(f"❌ No se encontró la carpeta de {mes_nombre} {anio_sel}")
-                    st.stop()
+                    st.error("Carpeta no encontrada."); st.stop()
                 
                 historial = leer_job_file(servicio, nombre_reporte)
                 auditados = [r.get('Archivo', '') for r in historial if isinstance(r, dict)]
-                
-                res = servicio.files().list(q=f"'{id_mes}' in parents and mimeType='application/pdf' and trashed=false", 
-                                            fields="files(id, name)", supportsAllDrives=True).execute()
-                pdfs_nas = res.get('files', [])
+                res = servicio.files().list(q=f"'{id_mes}' in parents and mimeType='application/pdf' and trashed=false", fields="files(id, name)").execute()
+                pdfs = res.get('files', [])
                 
                 st.session_state['lote_historial'] = historial
-                st.session_state['pendientes'] = [f for f in pdfs_nas if f['name'] not in auditados]
-                st.session_state['total_pdfs'] = len(pdfs_nas)
-                st.success(f"✅ Se encontraron {len(st.session_state['pendientes'])} pólizas nuevas.")
+                st.session_state['pendientes'] = [f for f in pdfs if f['name'] not in auditados]
+                st.session_state['total_pdfs'] = len(pdfs)
+                st.success(f"Sincronizado: {len(st.session_state['pendientes'])} pendientes.")
 
     if 'pendientes' in st.session_state and st.session_state['pendientes']:
-        st.write("### 📄 Cola de procesamiento")
-        st.dataframe(pd.DataFrame([{"Archivo": f['name']} for f in st.session_state['pendientes']]), use_container_width=True)
-        
-        if st.button("🚀 INICIAR PROCESO (AUTO-GUARDADO)"):
+        if st.button("🚀 INICIAR AUDITORÍA INCREMENTAL"):
             servicio = obtener_servicio_drive()
             progreso = st.progress(0)
-            status_text = st.empty()
-            lote_completo = st.session_state['lote_historial']
+            status = st.empty()
+            lote = st.session_state['lote_historial']
             
             for i, f in enumerate(st.session_state['pendientes']):
-                status_text.markdown(f"**Procesando:** `{f['name']}` ({i+1}/{len(st.session_state['pendientes'])})")
+                status.markdown(f"**Analizando:** `{f['name']}`")
+                res_ia = analizar_con_gemini(servicio, f['id'], f['name'])
                 
-                resultado = analizar_con_gemini(servicio, f['id'], f['name'])
-                
-                if "Omitir" not in str(resultado.get('Estatus', '')):
-                    lote_completo.append(resultado)
-                    # GUARDADO INCREMENTAL: Se guarda en Drive tras cada éxito
-                    guardar_job_file(servicio, lote_completo, nombre_reporte)
+                if "Omitir" not in str(res_ia.get('Estatus', '')):
+                    lote.append(res_ia)
+                    guardar_job_file(servicio, lote, nombre_reporte) # Guardado incremental
                 
                 progreso.progress((i + 1) / len(st.session_state['pendientes']))
             
-            st.session_state['lote_historial'] = lote_completo
             st.session_state['pendientes'] = []
-            st.success("✅ ¡Lote completado y sincronizado con Drive!")
+            st.success("Proceso finalizado.")
 
-# --- TAB 2: MONITOR ---
-with tabs[1]:
+with t2:
     if 'total_pdfs' in st.session_state:
-        total = st.session_state['total_pdfs']
         hechos = len(st.session_state.get('lote_historial', []))
-        prog_v = min(1.0, hechos / total) if total > 0 else 0.0
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total en QNAP", total)
-        c2.metric("Auditados (JSON)", hechos)
-        c3.metric("Progreso", f"{int(prog_v * 100)}%")
-        st.progress(prog_v)
+        st.metric("Progreso de Mayo", f"{hechos} de {st.session_state['total_pdfs']}")
+        st.progress(hechos / st.session_state['total_pdfs'])
 
-# --- TAB 3: REPORTE ---
-with tabs[2]:
-    datos = st.session_state.get('lote_historial', [])
-    if datos:
-        df = pd.DataFrame(datos)
-        st.write(f"### Análisis Técnico: {mes_nombre} {anio_sel}")
+with t3:
+    if st.session_state.get('lote_historial'):
+        df = pd.DataFrame(st.session_state['lote_historial'])
         st.dataframe(df, use_container_width=True)
-        
-        c1, c2 = st.columns(2)
-        c1.download_button("📥 Descargar CSV", df.to_csv(index=False), f"{nombre_reporte}.csv", "text/csv")
-        c2.download_button("📥 Descargar JSON Original", json.dumps(datos, indent=4, ensure_ascii=False), nombre_reporte, "application/json")
-    else:
-        st.warning("No hay datos auditados para mostrar.")
-        
+        st.download_button("📥 Descargar CSV", df.to_csv(index=False), f"{nombre_reporte}.csv")
