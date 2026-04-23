@@ -65,7 +65,7 @@ def guardar_job_file(servicio, datos, nombre_archivo):
         return True
     except Exception: return False 
 
-# --- 3. MOTOR IA (REFRESCADO PARA EVITAR EXTRA DATA) ---
+# --- 3. MOTOR IA ---
 def analizar_con_gemini(servicio, file_id, file_name):
     try:
         request = servicio.files().get_media(fileId=file_id)
@@ -98,16 +98,15 @@ def analizar_con_gemini(servicio, file_id, file_name):
             generation_config={"response_mime_type": "application/json"}
         )
         
-        # Validación de seguridad: Nos aseguramos de que sea un diccionario
         resultado = json.loads(response.text)
         return resultado if isinstance(resultado, dict) else None
             
     except Exception:
-        return {"Archivo": file_name, "Estatus": "Error en procesamiento de archivo"}
+        return {"Archivo": file_name, "Estatus": "Error en procesamiento"}
 
 # --- 4. INTERFAZ ---
 st.set_page_config(page_title="D&D Auditoría IA", layout="wide", page_icon="🛡️")
-st.title("🛡️ Auditoría Integral v8.1")
+st.title("🛡️ Auditoría Integral v8.2")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
@@ -137,13 +136,21 @@ with t1:
                 
                 historial = leer_job_file(servicio, nombre_reporte)
                 auditados = [r.get('Archivo', '') for r in historial if isinstance(r, dict)]
-                res = servicio.files().list(q=f"'{id_mes}' in parents and mimeType='application/pdf' and trashed=false", fields="files(id, name)").execute()
+                
+                # --- CORRECCIÓN: AHORA BUSCA HASTA 1,000 ARCHIVOS ---
+                res = servicio.files().list(
+                    q=f"'{id_mes}' in parents and mimeType='application/pdf' and trashed=false", 
+                    fields="files(id, name)",
+                    pageSize=1000, 
+                    supportsAllDrives=True
+                ).execute()
+                
                 pdfs = res.get('files', [])
                 
                 st.session_state['lote_historial'] = historial
                 st.session_state['pendientes'] = [f for f in pdfs if f['name'] not in auditados]
                 st.session_state['total_pdfs'] = len(pdfs)
-                st.success(f"Sincronizado: {len(st.session_state['pendientes'])} pendientes.")
+                st.success(f"Sincronizado: {len(st.session_state['pendientes'])} pendientes de un total de {len(pdfs)} archivos.")
 
     if 'pendientes' in st.session_state and st.session_state['pendientes']:
         if st.button("🚀 INICIAR AUDITORÍA INCREMENTAL"):
@@ -156,14 +163,12 @@ with t1:
                 status.markdown(f"**Analizando:** `{f['name']}`")
                 res_ia = analizar_con_gemini(servicio, f['id'], f['name'])
                 
-                # --- FIX: VALIDACIÓN DE DICCIONARIO ---
                 if res_ia and isinstance(res_ia, dict):
                     if "Omitir" not in str(res_ia.get('Estatus', '')):
                         lote.append(res_ia)
                         guardar_job_file(servicio, lote, nombre_reporte)
                 else:
-                    # Si falla, guardamos un registro de error para no quedarnos trabados
-                    lote.append({"Archivo": f['name'], "Estatus": "Error: IA devolvió formato inválido"})
+                    lote.append({"Archivo": f['name'], "Estatus": "Error: IA formato inválido"})
                     guardar_job_file(servicio, lote, nombre_reporte)
                 
                 progreso.progress((i + 1) / len(st.session_state['pendientes']))
@@ -172,17 +177,11 @@ with t1:
             st.success("Proceso finalizado.")
 
 with t2:
-    if 'total_pdfs' in st.session_state and st.session_state['total_pdfs'] > 0:
+    if 'total_pdfs' in st.session_state:
         hechos = len(st.session_state.get('lote_historial', []))
         total = st.session_state['total_pdfs']
-        
-        st.metric("Auditados", f"{hechos} de {total}")
-        
-        # Calculamos el ratio y nos aseguramos de que esté entre 0.0 y 1.0
-        progreso = max(0.0, min(hechos / total, 1.0))
-        st.progress(progreso)
-    elif 'total_pdfs' in st.session_state and st.session_state['total_pdfs'] == 0:
-        st.warning("No hay archivos en el total para calcular el progreso.")
+        st.metric("Estatus de Auditoría", f"{hechos} procesados de {total} totales")
+        st.progress(min(1.0, hechos / total) if total > 0 else 0)
 
 with t3:
     if st.session_state.get('lote_historial'):
