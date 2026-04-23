@@ -172,10 +172,17 @@ with t1:
             st.success("Proceso finalizado.")
 
 with t2:
-    if 'total_pdfs' in st.session_state:
+    if 'total_pdfs' in st.session_state and st.session_state['total_pdfs'] > 0:
         hechos = len(st.session_state.get('lote_historial', []))
-        st.metric("Auditados", f"{hechos} de {st.session_state['total_pdfs']}")
-        st.progress(hechos / st.session_state['total_pdfs'])
+        total = st.session_state['total_pdfs']
+        
+        st.metric("Auditados", f"{hechos} de {total}")
+        
+        # Calculamos el ratio y nos aseguramos de que esté entre 0.0 y 1.0
+        progreso = max(0.0, min(hechos / total, 1.0))
+        st.progress(progreso)
+    elif 'total_pdfs' in st.session_state and st.session_state['total_pdfs'] == 0:
+        st.warning("No hay archivos en el total para calcular el progreso.")
 
 with t3:
     if st.session_state.get('lote_historial'):
