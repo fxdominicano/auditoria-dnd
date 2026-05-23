@@ -1,7 +1,5 @@
 streamlit
 pandas
+google-genai
 google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
-google-generativeai
-PyPDF2
+google-auth
