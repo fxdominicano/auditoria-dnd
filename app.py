@@ -163,15 +163,27 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
 
 # --- 4. INTERFAZ DE USUARIO (STREAMLIT) ---
 st.set_page_config(page_title="D&D Auditoría IA", layout="wide", page_icon="🛡️")
-st.title("🛡️ Auditoría Integral v9.7")
+st.title("🛡️ Auditoría Integral v9.8")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
 
+# --- LÓGICA DE AÑOS TOTALMENTE DINÁMICA ---
+anio_corriente = datetime.datetime.now().year
+# Genera una lista desde 2025 hasta el año actual + 1 (ej: en 2026 creará ['2025', '2026', '2027'])
+anios_disponibles = [str(a) for a in range(2025, anio_corriente + 2)]
+try:
+    index_defecto = anios_disponibles.index(str(anio_corriente))
+except ValueError:
+    index_defecto = 0
+
 with st.container(border=True):
     st.subheader("📅 Periodo de Auditoría")
     col1, col2 = st.columns(2)
-    anio_sel = col1.selectbox("Año", ["2025", "2026", "2027"], index=1)
+    
+    # El selectbox ahora consume la lista dinámica y se posiciona automáticamente en el año actual
+    anio_sel = col1.selectbox("Año", anios_disponibles, index=index_defecto)
+    
     mes_idx = col2.selectbox("Mes", range(1, 13), index=datetime.datetime.now().month-1, format_func=lambda x: MESES_DICT[str(x)])
     mes_nombre = MESES_DICT[str(mes_idx)]
     nombre_reporte = f"job_{anio_sel}_{str(mes_idx).zfill(2)}.json"
@@ -271,7 +283,7 @@ with t1:
             
             st.session_state['pendientes'] = []
             st.session_state['lote_historial'] = lote
-            st.success("🎉 ¡Proceso de auditoría multi-ramo v9.7 finalizado con éxito!")
+            st.success("🎉 ¡Proceso de auditoría multi-ramo v9.8 finalizado con éxito!")
 
 with t2:
     if 'total_pdfs' in st.session_state:
