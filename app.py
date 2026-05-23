@@ -5,7 +5,7 @@ import datetime
 import json
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
-# Usamos el SDK moderno y oficial de Gemini
+# SDK moderno oficial de Google GenAI
 from google import genai
 from google.genai import types
 from googleapiclient.discovery import build
@@ -13,11 +13,11 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaInMemoryUpload, MediaIoBaseDownload
 
-# --- 1. CONFIGURACIÓN ---
+# --- 1. CONFIGURACIÓN GLOBAL ---
 ID_CONFIG_DIR = "15OPQmuf0CpD4MxYHFgD6Nv307Fd7POWt"
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
-# Inicialización del cliente moderno de Gemini
+# Inicialización segura del cliente Gemini 3.5 Flash
 client_gemini = None
 if "GEMINI_API_KEY" in st.secrets:
     client_gemini = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
@@ -33,10 +33,10 @@ def obtener_servicio_drive():
             creds.refresh(Request())
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"Error Drive: {e}")
+        st.error(f"Error crítico de conexión con Google Drive: {e}")
         return None
 
-# --- 2. GESTIÓN DE ARCHIVOS ---
+# --- 2. GESTIÓN DE ARCHIVOS (I/O EN LA NUBE) ---
 def buscar_carpeta(servicio, nombre, id_padre):
     query = f"name = '{nombre}' and '{id_padre}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res = servicio.files().list(q=query, fields="files(id)", supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
@@ -55,7 +55,8 @@ def leer_job_file(servicio, nombre_archivo):
         done = False
         while not done: _, done = downloader.next_chunk()
         return json.loads(fh.getvalue().decode('utf-8'))
-    except Exception: return []
+    except Exception: 
+        return []
 
 def guardar_job_file(servicio, datos, nombre_archivo):
     try:
@@ -68,13 +69,14 @@ def guardar_job_file(servicio, datos, nombre_archivo):
             meta = {'name': nombre_archivo, 'parents': [ID_CONFIG_DIR]}
             servicio.files().create(body=meta, media_body=media, supportsAllDrives=True).execute()
         return True
-    except Exception: return False 
+    except Exception: 
+        return False 
 
-# --- 3. MOTOR IA OPTIMIZADO (TRABAJA EN HILOS PARALELOS) ---
+# --- 3. MOTOR DE AUDITORÍA IA ASÍNCRONO (HILOS EN PARALELO) ---
 def analizar_con_gemini_worker(token_info, file_id, file_name):
-    """Ejecuta la descarga y el análisis de forma aislada y segura para hilos."""
+    """Descarga una póliza individual y ejecuta la auditoría con Gemini 3.5 Flash."""
     try:
-        # Re-creamos el servicio de Drive por hilo para evitar colisiones de conexión
+        # Instanciar servicio único por hilo de ejecución para evitar colisiones en la red
         creds = Credentials.from_authorized_user_info(json.loads(token_info), SCOPES)
         servicio_hilo = build('drive', 'v3', credentials=creds)
         
@@ -84,20 +86,20 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
         done = False
         while not done: _, done = downloader.next_chunk()
         
-        # System Instructions con reglas de negocio estrictas
+        # System Instructions: Reglas de negocio e identidad corporativa inquebrantables
         system_instruction = """
         Actúa como un Auditor Senior de Seguros en República Dominicana para D&D Asesores.
         Extrae datos técnicos del PDF de forma ultra precisa.
         
-        REGLAS DE FORMATO OBLIGATORIAS:
-        1. Fechas: Absolutamente todas las fechas detectadas deben estructurarse en formato estricto (DD/MM/AAAA).
-        2. Seguros de Salud Locales: Está terminantemente prohibido usar el término 'deducible'. Debes mapear y expresar estos conceptos bajo el término exclusivo 'diferencias' (copagos, coaseguros o topes de diferencias).
-        3. Seguridad de Enlaces: Por políticas de seguridad de la firma, no extraigas ni redactes enlaces directos de pago de aseguradoras.
+        REGLAS DE NEGOCIO OBLIGATORIAS:
+        1. Formato de Fechas: Expresa absolutamente todas las fechas detectadas en formato estricto (DD/MM/AAAA).
+        2. Seguros de Salud Locales: Está estrictamente prohibido utilizar el término 'deducible'. Debes mapear y registrar estos valores bajo el concepto exclusivo de 'diferencias' (incluyendo copagos, coaseguros o topes de diferencias).
+        3. Seguridad de Enlaces: Por políticas estrictas de control de la firma, no extraigas ni escribas enlaces directos a pasarelas de pago externas de aseguradoras.
         """
         
         prompt = f"""
         Analiza detalladamente este documento y extrae la información requerida cumpliendo con la estructura JSON solicitada.
-        Si es Factura de Aumento, analiza rigurosamente los nuevos límites vigentes.
+        Si identificas que es una Factura de Aumento, analiza rigurosamente los nuevos límites vigentes.
         
         ESTRUCTURA JSON REQUERIDA:
         {{
@@ -114,7 +116,7 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
         }}
         """
         
-        # Uso del nuevo cliente de Gemini 3.5 Flash (Velocidad y precisión nativa para agentes)
+        # Llamada al modelo Gemini 3.5 Flash optimizado para flujos concurrentes
         response = client_gemini.models.generate_content(
             model='gemini-3.5-flash',
             contents=[
@@ -124,19 +126,19 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 response_mime_type="application/json",
-                temperature=0.15 # Temperatura baja para mitigar alucinaciones en datos numéricos
+                temperature=0.15  # Precisión matemática y técnica para mitigar alucinaciones
             )
         )
         
         resultado = json.loads(response.text)
-        return resultado if isinstance(resultado, dict) else {"Archivo": file_name, "Estatus": "Error: Formato JSON inesperado"}
+        return resultado if isinstance(resultado, dict) else {"Archivo": file_name, "Estatus": "Error: Formato estructurado corrupto"}
             
     except Exception as e:
         return {"Archivo": file_name, "Estatus": f"Error en procesamiento: {str(e)}"}
 
-# --- 4. INTERFAZ ---
+# --- 4. INTERFAZ DE USUARIO (STREAMLIT) ---
 st.set_page_config(page_title="D&D Auditoría IA", layout="wide", page_icon="🛡️")
-st.title("🛡️ Auditoría Integral v9.0 (Alta Velocidad)")
+st.title("🛡️ Auditoría Integral v9.0")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
@@ -148,22 +150,36 @@ with st.container(border=True):
     mes_idx = col2.selectbox("Mes", range(1, 13), index=datetime.datetime.now().month-1, format_func=lambda x: MESES_DICT[str(x)])
     mes_nombre = MESES_DICT[str(mes_idx)]
     nombre_reporte = f"job_{anio_sel}_{str(mes_idx).zfill(2)}.json"
+    
+    # --- FUNCIONALIDAD DE RECUPERACIÓN HISTÓRICA INMEDIATA ---
+    if st.button("📥 CARGAR REPORTE HISTÓRICO (SIN ESCANEAR QNAP)", use_container_width=True):
+        servicio = obtener_servicio_drive()
+        if servicio:
+            with st.spinner("Buscando base de datos histórica en la nube..."):
+                historial = leer_job_file(servicio, nombre_reporte)
+                if historial:
+                    st.session_state['lote_historial'] = historial
+                    st.session_state['total_pdfs'] = len(historial)
+                    st.session_state['pendientes'] = []
+                    st.success(f"📦 ¡Reporte histórico recuperado exitosamente! {len(historial)} registros cargados. Dirígete a la pestaña 'Reporte' para descargar tu archivo CSV.")
+                else:
+                    st.warning("No se localizó ninguna auditoría guardada de manera previa para este periodo de tiempo específico.")
 
 with st.sidebar:
-    st.header("⚙️ NAS")
+    st.header("⚙️ Configuración de Almacenamiento")
     root_id = st.text_input("ID Carpeta QNAP", value=st.secrets.get("DRIVE_FOLDER_ID", ""), type="password")
 
 t1, t2, t3 = st.tabs(["🚀 Ejecución", "📊 Monitor", "🏆 Reporte"])
 
 with t1:
-    if st.button("🔍 ESCANEAR QNAP"):
+    if st.button("🔍 ESCANEAR ESTRUCTURA QNAP"):
         servicio = obtener_servicio_drive()
         if servicio and root_id:
-            with st.spinner("Sincronizando archivos desde el almacenamiento..."):
+            with st.spinner("Sincronizando el índice de carpetas físicas y digitales..."):
                 id_anio = buscar_carpeta(servicio, anio_sel, root_id)
                 id_mes = buscar_carpeta(servicio, mes_nombre, id_anio) if id_anio else None
                 if not id_mes: 
-                    st.error("Carpeta mensual no encontrada en la estructura.")
+                    st.error("No se localizó la estructura de carpetas correspondiente al mes seleccionado.")
                     st.stop()
                 
                 historial = leer_job_file(servicio, nombre_reporte)
@@ -181,12 +197,12 @@ with t1:
                 st.session_state['lote_historial'] = historial
                 st.session_state['pendientes'] = [f for f in pdfs if f['name'] not in auditados]
                 st.session_state['total_pdfs'] = len(pdfs)
-                st.success(f"Sincronizado: {len(st.session_state['pendientes'])} pendientes de un total de {len(pdfs)} archivos.")
+                st.success(f"Escaneo completo: {len(st.session_state['pendientes'])} pendientes detectados de un universo total de {len(pdfs)} archivos.")
 
     if 'pendientes' in st.session_state and st.session_state['pendientes']:
         if st.button("🚀 INICIAR AUDITORÍA EN PARALELO"):
             if not client_gemini:
-                st.error("Falta configurar la API Key de Gemini en los secrets.")
+                st.error("Error: Llave de API (GEMINI_API_KEY) no configurada.")
                 st.stop()
                 
             servicio = obtener_servicio_drive()
@@ -198,15 +214,13 @@ with t1:
             pendientes = st.session_state['pendientes']
             total_pendientes = len(pendientes)
             
-            # --- CONCURRENCIA ---
-            # Procesamos hasta 5 archivos de forma simultánea sin saturar cuotas de la API
+            # Ajuste de carga concurrente (5 análisis simultáneos para optimizar velocidad y cuotas de red)
             CONCURRENT_WORKERS = 5
-            st.info(f"Procesando en bloque de a {CONCURRENT_WORKERS} hilos simultáneos...")
+            st.info(f"Procesando hilos de ejecución en lotes concurrentes de {CONCURRENT_WORKERS}...")
             
             contador_completados = 0
             
             with ThreadPoolExecutor(max_workers=CONCURRENT_WORKERS) as executor:
-                # Mapeamos las tareas de los hilos
                 futuro_a_archivo = {
                     executor.submit(analizar_con_gemini_worker, token_info, f['id'], f['name']): f 
                     for f in pendientes
@@ -219,41 +233,36 @@ with t1:
                     try:
                         res_ia = futuro.result()
                         if res_ia and isinstance(res_ia, dict):
-                            # Evitamos meter ruido si el estatus dice explícitamente omitir
                             if "Omitir" not in str(res_ia.get('Estatus', '')):
                                 lote.append(res_ia)
                             else:
                                 lote.append({"Archivo": archivo_info['name'], "Estatus": "Omitido por regla de negocio"})
                         else:
-                            lote.append({"Archivo": archivo_info['name'], "Estatus": "Error: Formato de respuesta corrupto"})
+                            lote.append({"Archivo": archivo_info['name'], "Estatus": "Error: Formato inválido"})
                     except Exception as exc:
-                        lote.append({"Archivo": archivo_info['name'], "Estatus": f"Error crítico en hilo: {exc}"})
+                        lote.append({"Archivo": archivo_info['name'], "Estatus": f"Falla crítica en hilo: {exc}"})
                     
-                    # --- OPTIMIZACIÓN DE I/O EN DRIVE ---
-                    # Guardamos el estado global en Drive solo cada 5 archivos procesados o en el último archivo.
-                    # Esto evita hacer llamadas de escritura constantes a la red.
+                    # --- OPTIMIZACIÓN DE I/O: Guardado periódico inteligente ---
                     if contador_completados % 5 == 0 or contador_completados == total_pendientes:
-                        status.markdown(f"💾 Guardando lote de progreso en Drive... ({contador_completados}/{total_pendientes})")
+                        status.markdown(f"💾 Respaldando lote de progreso en Google Drive... ({contador_completados}/{total_pendientes})")
                         guardar_job_file(servicio, lote, nombre_reporte)
                     
-                    # Actualizar interfaz de Streamlit en tiempo real
-                    status.markdown(f"**Progreso:** Analizado `{archivo_info['name']}` ({contador_completados}/{total_pendientes})")
+                    status.markdown(f"**Analizado:** `{archivo_info['name']}` ({contador_completados}/{total_pendientes})")
                     progreso.progress(contador_completados / total_pendientes)
             
             st.session_state['pendientes'] = []
             st.session_state['lote_historial'] = lote
-            st.success("🎉 ¡Auditoría incremental completada con éxito en tiempo récord!")
+            st.success("🎉 ¡Proceso de auditoría por lotes concurrentes finalizado exitosamente!")
 
 with t2:
     if 'total_pdfs' in st.session_state:
         hechos = len(st.session_state.get('lote_historial', []))
         total = st.session_state['total_pdfs']
-        st.metric("Estatus de Auditoría", f"{hechos} procesados de {total} totales")
+        st.metric("Estatus del Lote Actual", f"{hechos} procesados de {total} totales")
         st.progress(min(1.0, hechos / total) if total > 0 else 0)
 
 with t3:
     if st.session_state.get('lote_historial'):
         df = pd.DataFrame(st.session_state['lote_historial'])
         st.dataframe(df, use_container_width=True)
-        st.download_button("📥 Descargar CSV", df.to_csv(index=False), f"{nombre_reporte}.csv")
-        
+        st.download_button("📥 Descargar Reporte CSV", df.to_csv(index=False), f"{nombre_reporte}.csv", use_container_width=True)
