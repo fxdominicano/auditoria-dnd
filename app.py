@@ -72,9 +72,9 @@ def guardar_job_file(servicio, datos, nombre_archivo):
     except Exception: 
         return False 
 
-# --- 3. MOTOR DE AUDITORÍA IA ASÍNCRONO (HILOS EN PARALELO) ---
+# --- 3. MOTOR DE AUDITORÍA IA ASÍNCRONO CON BÚSQUEDA WEB EN VIVO ---
 def analizar_con_gemini_worker(token_info, file_id, file_name):
-    """Descarga una póliza individual y ejecuta la auditoría con Gemini 3.5 Flash."""
+    """Descarga la póliza, investiga el valor de mercado real en internet y audita con Gemini 3.5 Flash."""
     try:
         # Instanciar servicio único por hilo de ejecución para evitar colisiones en la red
         creds = Credentials.from_authorized_user_info(json.loads(token_info), SCOPES)
@@ -86,37 +86,43 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
         done = False
         while not done: _, done = downloader.next_chunk()
         
-        # System Instructions: Reglas de negocio e identidad corporativa inquebrantables
+        # System Instructions: Reglas de negocio, navegación web obligatoria e identidad de la firma
         system_instruction = """
         Actúa como un Auditor Senior de Seguros en República Dominicana para D&D Asesores.
-        Extrae datos técnicos del PDF de forma ultra precisa.
+        Tienes acceso a la herramienta Google Search. Úsala de forma obligatoria para realizar el siguiente análisis:
         
-        REGLAS DE NEGOCIO OBLIGATORIAS:
+        REGLAS DE BÚSQUEDA Y AUDITORÍA DE VEHÍCULOS:
+        1. Si el documento corresponde al ramo de Vehículos de Motor (Autos), identifica la Marca, Modelo y Año exacto del vehículo en el PDF.
+        2. Realiza de forma autónoma una búsqueda en internet enfocada en el mercado automotriz de República Dominicana (ej. supercarros.com u otros portales locales) para determinar el valor de mercado promedio actual de ese vehículo.
+        3. Compara ese valor de mercado encontrado con la 'Suma_Asegurada_RD' descrita en la póliza.
+        4. Calcula matemáticamente la 'Brecha' (Valor de Mercado - Suma Asegurada). Si la Suma Asegurada está significativamente por debajo del valor de la calle, define el 'Estatus' como "Requiere Aumento".
+        
+        REGLAS DE NEGOCIO OBLIGATORIAS E INQUEBRANTABLES:
         1. Formato de Fechas: Expresa absolutamente todas las fechas detectadas en formato estricto (DD/MM/AAAA).
-        2. Seguros de Salud Locales: Está estrictamente prohibido utilizar el término 'deducible'. Debes mapear y registrar estos valores bajo el concepto exclusivo de 'diferencias' (incluyendo copagos, coaseguros o topes de diferencias).
+        2. Seguros de Salud Locales: Está terminantemente prohibido utilizar el término 'deducible'. Debes mapear y registrar estos valores bajo el concepto exclusivo de 'diferencias' (incluyendo copagos, coaseguros o topes de diferencias).
         3. Seguridad de Enlaces: Por políticas estrictas de control de la firma, no extraigas ni escribas enlaces directos a pasarelas de pago externas de aseguradoras.
         """
         
         prompt = f"""
-        Analiza detalladamente este documento y extrae la información requerida cumpliendo con la estructura JSON solicitada.
-        Si identificas que es una Factura de Aumento, analiza rigurosamente los nuevos límites vigentes.
+        Analiza detalladamente este documento técnico y extrae la información requerida cumpliendo con la estructura JSON solicitada.
+        Si es de Autos, busca obligatoriamente el valor de mercado real en Google Search para completar los campos financieros y calcular la brecha de infraseguro.
         
         ESTRUCTURA JSON REQUERIDA:
         {{
             "Archivo": "{file_name}",
-            "Ramo": "Texto",
-            "Detalle_Objeto": "Texto",
-            "Sub_Modelo": "Texto",
+            "Ramo": "Texto (ej: Vehículos de Motor / Salud / Incendio)",
+            "Detalle_Objeto": "Texto (ej: Marca Modelo Año del vehículo o descripción del riesgo)",
+            "Sub_Modelo": "Texto (ej: SE, XL, Sport, etc., si aplica)",
             "Suma_Asegurada_RD": 0,
-            "Valor_Mercado_o_Limite": 0,
-            "Brecha": 0,
+            "Valor_Mercado_o_Limite": 0,  # Aquí va el valor promedio real encontrado en internet (ej: supercarros)
+            "Brecha": 0,                  # Cálculo matemático: (Valor_Mercado_o_Limite - Suma_Asegurada_RD)
             "Estatus": "Requiere Aumento / Correcto / Omitir - Solo Ley",
-            "Nota_Auditoria": "Texto breve descriptivo",
+            "Nota_Auditoria": "Texto breve descriptivo (ej: 'Valor en mercado RD ronda los RD$X, en póliza está por debajo')",
             "Fecha_Analisis": "({datetime.datetime.now().strftime('%d/%m/%Y')})"
         }}
         """
         
-        # Llamada al modelo Gemini 3.5 Flash optimizado para flujos concurrentes
+        # Llamada al modelo Gemini 3.5 Flash activando la herramienta nativa de búsqueda de Google
         response = client_gemini.models.generate_content(
             model='gemini-3.5-flash',
             contents=[
@@ -126,7 +132,8 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 response_mime_type="application/json",
-                temperature=0.15  # Precisión matemática y técnica para mitigar alucinaciones
+                temperature=0.15,  # Precisión matemática y técnica para mitigar alucinaciones
+                tools=[types.Tool(google_search=types.GoogleSearch())]  # Grounding en vivo activado
             )
         )
         
@@ -138,7 +145,7 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
 
 # --- 4. INTERFAZ DE USUARIO (STREAMLIT) ---
 st.set_page_config(page_title="D&D Auditoría IA", layout="wide", page_icon="🛡️")
-st.title("🛡️ Auditoría Integral v9.0")
+st.title("🛡️ Auditoría Integral v9.1")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
@@ -151,7 +158,7 @@ with st.container(border=True):
     mes_nombre = MESES_DICT[str(mes_idx)]
     nombre_reporte = f"job_{anio_sel}_{str(mes_idx).zfill(2)}.json"
     
-    # --- FUNCIONALIDAD DE RECUPERACIÓN HISTÓRICA INMEDIATA ---
+    # --- RECUPERACIÓN HISTÓRICA INMEDIATA ---
     if st.button("📥 CARGAR REPORTE HISTÓRICO (SIN ESCANEAR QNAP)", use_container_width=True):
         servicio = obtener_servicio_drive()
         if servicio:
@@ -242,17 +249,17 @@ with t1:
                     except Exception as exc:
                         lote.append({"Archivo": archivo_info['name'], "Estatus": f"Falla crítica en hilo: {exc}"})
                     
-                    # --- OPTIMIZACIÓN DE I/O: Guardado periódico inteligente ---
+                    # --- OPTIMIZACIÓN DE I/O: Guardado periódico inteligente cada 5 archivos ---
                     if contador_completados % 5 == 0 or contador_completados == total_pendientes:
                         status.markdown(f"💾 Respaldando lote de progreso en Google Drive... ({contador_completados}/{total_pendientes})")
                         guardar_job_file(servicio, lote, nombre_reporte)
                     
-                    status.markdown(f"**Analizado:** `{archivo_info['name']}` ({contador_completados}/{total_pendientes})")
+                    status.markdown(f"**Analizando con Búsqueda Web:** `{archivo_info['name']}` ({contador_completados}/{total_pendientes})")
                     progreso.progress(contador_completados / total_pendientes)
             
             st.session_state['pendientes'] = []
             st.session_state['lote_historial'] = lote
-            st.success("🎉 ¡Proceso de auditoría por lotes concurrentes finalizado exitosamente!")
+            st.success("🎉 ¡Proceso de auditoría por lotes concurrentes y búsqueda en vivo finalizado con éxito!")
 
 with t2:
     if 'total_pdfs' in st.session_state:
@@ -266,3 +273,4 @@ with t3:
         df = pd.DataFrame(st.session_state['lote_historial'])
         st.dataframe(df, use_container_width=True)
         st.download_button("📥 Descargar Reporte CSV", df.to_csv(index=False), f"{nombre_reporte}.csv", use_container_width=True)
+        
