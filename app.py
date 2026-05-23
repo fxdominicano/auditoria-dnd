@@ -72,9 +72,9 @@ def guardar_job_file(servicio, datos, nombre_archivo):
     except Exception: 
         return False 
 
-# --- 3. MOTOR DE AUDITORÍA IA ASÍNCRONO MULTI-RAMO OPTIMIZADO ---
+# --- 3. MOTOR DE AUDITORÍA IA ASÍNCRONO MULTI-RAMO BLINDADO ---
 def analizar_con_gemini_worker(token_info, file_id, file_name):
-    """Descarga la póliza, pre-califica según el ramo y ejecuta las reglas técnicas de negocio."""
+    """Descarga la póliza, pre-califica el riesgo y ejecuta auditorías exhaustivas de cláusulas y asistencias."""
     try:
         # Instanciar servicio único por hilo de ejecución para evitar colisiones en la red
         creds = Credentials.from_authorized_user_info(json.loads(token_info), SCOPES)
@@ -86,32 +86,36 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
         done = False
         while not done: _, done = downloader.next_chunk()
         
-        # System Instructions con la nueva alerta de negociación para deducibles de Incendio
+        # System Instructions optimizadas con las nuevas reglas de asistencias, CAA/CMA y RC Exceso
         system_instruction = """
         Actúa como un Auditor Senior de Seguros en República Dominicana para D&D Asesores.
         Tienes acceso a la herramienta Google Search. Úsala de forma inteligente según el ramo identificado:
         
-        REGLAS DE AUDITORÍA PARA VEHÍCULOS DE MOTOR (AUTOS):
-        1. Inspecciona si la póliza incluye cobertura de 'Daños Propios', 'Colisión y Vuelco' o 'Comprensivo' (Seguro Full).
-        2. SI ES 'SOLO LEY' o 'RESPONSABILIDAD CIVIL': No uses Google Search. Pon los campos financieros en 0, define Estatus como "Omitir - Solo Ley" y detalla en Nota_Auditoria que es una póliza básica.
-        3. SI ES 'SEGURO FULL': Usa Google Search en portales dominicanos (ej. supercarros.com) para buscar el valor de mercado promedio del vehículo (Marca, Modelo, Año). Calcula la 'Brecha' (Valor de Mercado - Suma Asegurada). Si está infra-asegurado, Estatus es "Requiere Aumento", de lo contrario "Correcto".
+        REGLAS DE AUDITORÍA TRANSVERSAL PARA VEHÍCULOS DE MOTOR (AUTOS - APLICA A FULL Y LEY):
+        Aplica las siguientes verificaciones obligatorias sin importar si el seguro es Full o de Ley:
+        1. Inspección de RC Exceso: Revisa si el asegurado cuenta con la cobertura de 'RC Auto Exceso' o 'Responsabilidad Civil de Exceso', ya sea declarada en el desglose de la misma póliza o mediante una mención a una póliza paralela anexa.
+        2. Inspección de Centros de Asistencia Legal: Confirma rigurosamente si la póliza incluye el 'Centro del Automovilista' (CAA) o la 'Casa del Conductor' (CMA). Si NO incluye ninguno de los dos, debes activar una ALERTA CRÍTICA: cambia el campo 'Estatus' obligatoriamente a "Requiere Revisión y Negociación" y resalta en la nota la vulnerabilidad legal del asegurado.
+        3. Inspección de Asistencias Viales: Verifica la presencia de servicios de 'Rescate 365', 'Asistencia Vial', 'Grúa', o 'Asistencia Seguros de Ley'. Si no se menciona ningún servicio de asistencia o remolque, agrégalo como una brecha de protección en la nota técnica.
+        
+        FILTRO COMPLEMENTARIO DE BÚSQUEDA WEB (SOLO VEHÍCULOS FULL):
+        - Si la póliza de Auto incluye 'Daños Propios', 'Colisión y Vuelco' o 'Comprensivo' (Seguro Full): Usa Google Search en portales dominicanos (ej. supercarros.com) para verificar el valor de mercado actual. Calcula la 'Brecha' (Valor de Mercado - Suma Asegurada). Si está infra-asegurado y no tiene fallas de CAA/CMA, el Estatus es "Requiere Aumento".
+        - Si la póliza de Auto es estrictamente 'Solo Ley' o 'Responsabilidad Civil': No uses Google Search. Pon los campos financieros en 0. Si pasa las pruebas de CAA/CMA y asistencias, el Estatus será "Omitir - Solo Ley".
         
         REGLAS DE AUDITORÍA PARA INCENDIO Y ALIADOS:
-        1. Si el documento corresponde al ramo de Incendio y Aliados, inspecciona rigurosamente las condiciones particulares y el cuadro de coberturas.
-        2. Confirma de forma explícita si la póliza incluye la cláusula de 'Valor de Reposición' (o reemplazo) y la cobertura de 'Combustión Espontánea'.
-        3. Identifica si la cobertura de Incendio y/o Rayo aplica algún deducible específico y extrae su porcentaje o monto correspondiente.
-        4. REGLA CRÍTICA DE ALERTA: Si detectas que existe un deducible aplicable a la cobertura de Incendio y/o Rayo, debes definir el campo 'Estatus' obligatoriamente como "Requiere Revisión y Negociación" (en lugar de "Correcto"), indicando en la nota que se debe evaluar la eliminación o reducción del mismo con la aseguradora.
-        5. En el campo 'Nota_Auditoria', redacta obligatoriamente un desglose técnico estructurado confirmando estos hallazgos junto con un listado detallado de todas las demás coberturas aliadas contratadas (Terremoto, Huracán, Inundación, Remoción de Escombros, Pérdidas Consecuenciales, etc.).
+        1. Inspecciona las condiciones particulares y el cuadro de coberturas.
+        2. Confirma si incluye la cláusula de 'Valor de Reposición' y la cobertura de 'Combustión Espontánea'.
+        3. Identifica si aplica algún deducible específico a la cobertura de Incendio y/o Rayo y extrae su porcentaje o monto. Si existe un deducible en esta cobertura principal, define el campo 'Estatus' obligatoriamente como "Requiere Revisión y Negociación".
+        4. En 'Nota_Auditoria', redacta un desglose estructurado confirmando estos hallazgos junto con el listado completo de coberturas aliadas contratadas (Terremoto, Huracán, Inundación, etc.).
         
         REGLAS DE NEGOCIO CORPORATIVAS E INQUEBRANTABLES:
         1. Formato de Fechas: Expresa absolutamente todas las fechas detectadas en formato estricto (DD/MM/AAAA).
-        2. Seguros de Salud Locales: Está terminantemente prohibido utilizar el término 'deducible'. Debes mapear y registrar estos valores bajo el concepto exclusivo de 'diferencias' (copagos, coaseguros o topes de diferencias).
+        2. Seguros de Salud Locales: Está terminantemente prohibido utilizar el término 'deducible'. Debes registrar estos valores bajo el concepto exclusivo de 'diferencias' (copagos, coaseguros o topes de diferencias).
         3. Seguridad de Enlaces: Por políticas de control de la firma, no extraigas ni escribas enlaces directos a pasarelas de pago de aseguradoras.
         """
         
         prompt = f"""
         Analiza detalladamente este documento técnico. Identifica el ramo correspondiente y aplica las directrices del sistema.
-        Si es una póliza de Incendio y Aliados, evalúa con cuidado los deducibles para activar la alerta de revisión y negociación si aplica.
+        Si es de Autos, realiza con rigurosidad la auditoría técnica de coberturas de RC Exceso, asistencias viales y la verificación obligatoria de inclusión de CAA (Centro del Automovilista) o CMA (Casa del Conductor).
         
         ESTRUCTURA JSON REQUERIDA:
         {{
@@ -120,10 +124,10 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
             "Detalle_Objeto": "Texto (ej: Dirección del riesgo asegurado, o Marca/Modelo/Año si es auto)",
             "Sub_Modelo": "Texto (ej: SE, XL, Sport / o Descripción del bloque edificado si aplica)",
             "Suma_Asegurada_RD": 0,
-            "Valor_Market_o_Limite": 0,  
+            "Valor_Mercado_o_Limite": 0,  
             "Brecha": 0,                  
             "Estatus": "Requiere Aumento / Correcto / Omitir - Solo Ley / Requiere Revisión y Negociación",
-            "Nota_Auditoria": "Texto descriptivo detallado. Si es Incendio, detalla de forma exhaustiva: 1. ¿Incluye Valor de Reposición? 2. ¿Incluye Combustión Espontánea? 3. Deducible de Incendio y su % (marcando la necesidad de negociación si existe). 4. Detalle completo de todas las coberturas aliadas encontradas.",
+            "Nota_Auditoria": "Texto descriptivo detallado. Si es Auto, detalla explícitamente: 1. Estado de RC Exceso. 2. Presencia de CAA o CMA (marcando alerta si falta). 3. Estatus de Asistencia Vial/Grúa/Rescate 365. 4. Análisis de valor de mercado si es Full.",
             "Fecha_Analisis": "({datetime.datetime.now().strftime('%d/%m/%Y')})"
         }}
         """
@@ -151,7 +155,7 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
 
 # --- 4. INTERFAZ DE USUARIO (STREAMLIT) ---
 st.set_page_config(page_title="D&D Auditoría IA", layout="wide", page_icon="🛡️")
-st.title("🛡️ Auditoría Integral v9.4")
+st.title("🛡️ Auditoría Integral v9.5")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
@@ -261,7 +265,7 @@ with t1:
             
             st.session_state['pendientes'] = []
             st.session_state['lote_historial'] = lote
-            st.success("🎉 ¡Proceso de auditoría multi-ramo finalizado con éxito!")
+            st.success("🎉 ¡Proceso de auditoría de asistencias y coberturas vehiculares finalizado con éxito!")
 
 with t2:
     if 'total_pdfs' in st.session_state:
