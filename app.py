@@ -72,9 +72,9 @@ def guardar_job_file(servicio, datos, nombre_archivo):
     except Exception: 
         return False 
 
-# --- 3. MOTOR DE AUDITORÍA IA ASÍNCRONO CON BÚSQUEDA WEB EN VIVO ---
+# --- 3. MOTOR DE AUDITORÍA IA ASÍNCRONO MULTI-RAMO OPTIMIZADO ---
 def analizar_con_gemini_worker(token_info, file_id, file_name):
-    """Descarga la póliza, investiga el valor de mercado real en internet y audita con Gemini 3.5 Flash."""
+    """Descarga la póliza, pre-califica según el ramo y ejecuta las reglas técnicas de negocio."""
     try:
         # Instanciar servicio único por hilo de ejecución para evitar colisiones en la red
         creds = Credentials.from_authorized_user_info(json.loads(token_info), SCOPES)
@@ -86,43 +86,49 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
         done = False
         while not done: _, done = downloader.next_chunk()
         
-        # System Instructions: Reglas de negocio, navegación web obligatoria e identidad de la firma
+        # System Instructions con la nueva alerta de negociación para deducibles de Incendio
         system_instruction = """
         Actúa como un Auditor Senior de Seguros en República Dominicana para D&D Asesores.
-        Tienes acceso a la herramienta Google Search. Úsala de forma obligatoria para realizar el siguiente análisis:
+        Tienes acceso a la herramienta Google Search. Úsala de forma inteligente según el ramo identificado:
         
-        REGLAS DE BÚSQUEDA Y AUDITORÍA DE VEHÍCULOS:
-        1. Si el documento corresponde al ramo de Vehículos de Motor (Autos), identifica la Marca, Modelo y Año exacto del vehículo en el PDF.
-        2. Realiza de forma autónoma una búsqueda en internet enfocada en el mercado automotriz de República Dominicana (ej. supercarros.com u otros portales locales) para determinar el valor de mercado promedio actual de ese vehículo.
-        3. Compara ese valor de mercado encontrado con la 'Suma_Asegurada_RD' descrita en la póliza.
-        4. Calcula matemáticamente la 'Brecha' (Valor de Mercado - Suma Asegurada). Si la Suma Asegurada está significativamente por debajo del valor de la calle, define el 'Estatus' como "Requiere Aumento".
+        REGLAS DE AUDITORÍA PARA VEHÍCULOS DE MOTOR (AUTOS):
+        1. Inspecciona si la póliza incluye cobertura de 'Daños Propios', 'Colisión y Vuelco' o 'Comprensivo' (Seguro Full).
+        2. SI ES 'SOLO LEY' o 'RESPONSABILIDAD CIVIL': No uses Google Search. Pon los campos financieros en 0, define Estatus como "Omitir - Solo Ley" y detalla en Nota_Auditoria que es una póliza básica.
+        3. SI ES 'SEGURO FULL': Usa Google Search en portales dominicanos (ej. supercarros.com) para buscar el valor de mercado promedio del vehículo (Marca, Modelo, Año). Calcula la 'Brecha' (Valor de Mercado - Suma Asegurada). Si está infra-asegurado, Estatus es "Requiere Aumento", de lo contrario "Correcto".
         
-        REGLAS DE NEGOCIO OBLIGATORIAS E INQUEBRANTABLES:
+        REGLAS DE AUDITORÍA PARA INCENDIO Y ALIADOS:
+        1. Si el documento corresponde al ramo de Incendio y Aliados, inspecciona rigurosamente las condiciones particulares y el cuadro de coberturas.
+        2. Confirma de forma explícita si la póliza incluye la cláusula de 'Valor de Reposición' (o reemplazo) y la cobertura de 'Combustión Espontánea'.
+        3. Identifica si la cobertura de Incendio y/o Rayo aplica algún deducible específico y extrae su porcentaje o monto correspondiente.
+        4. REGLA CRÍTICA DE ALERTA: Si detectas que existe un deducible aplicable a la cobertura de Incendio y/o Rayo, debes definir el campo 'Estatus' obligatoriamente como "Requiere Revisión y Negociación" (en lugar de "Correcto"), indicando en la nota que se debe evaluar la eliminación o reducción del mismo con la aseguradora.
+        5. En el campo 'Nota_Auditoria', redacta obligatoriamente un desglose técnico estructurado confirmando estos hallazgos junto con un listado detallado de todas las demás coberturas aliadas contratadas (Terremoto, Huracán, Inundación, Remoción de Escombros, Pérdidas Consecuenciales, etc.).
+        
+        REGLAS DE NEGOCIO CORPORATIVAS E INQUEBRANTABLES:
         1. Formato de Fechas: Expresa absolutamente todas las fechas detectadas en formato estricto (DD/MM/AAAA).
-        2. Seguros de Salud Locales: Está terminantemente prohibido utilizar el término 'deducible'. Debes mapear y registrar estos valores bajo el concepto exclusivo de 'diferencias' (incluyendo copagos, coaseguros o topes de diferencias).
-        3. Seguridad de Enlaces: Por políticas estrictas de control de la firma, no extraigas ni escribas enlaces directos a pasarelas de pago externas de aseguradoras.
+        2. Seguros de Salud Locales: Está terminantemente prohibido utilizar el término 'deducible'. Debes mapear y registrar estos valores bajo el concepto exclusivo de 'diferencias' (copagos, coaseguros o topes de diferencias).
+        3. Seguridad de Enlaces: Por políticas de control de la firma, no extraigas ni escribas enlaces directos a pasarelas de pago de aseguradoras.
         """
         
         prompt = f"""
-        Analiza detalladamente este documento técnico y extrae la información requerida cumpliendo con la estructura JSON solicitada.
-        Si es de Autos, busca obligatoriamente el valor de mercado real en Google Search para completar los campos financieros y calcular la brecha de infraseguro.
+        Analiza detalladamente este documento técnico. Identifica el ramo correspondiente y aplica las directrices del sistema.
+        Si es una póliza de Incendio y Aliados, evalúa con cuidado los deducibles para activar la alerta de revisión y negociación si aplica.
         
         ESTRUCTURA JSON REQUERIDA:
         {{
             "Archivo": "{file_name}",
-            "Ramo": "Texto (ej: Vehículos de Motor / Salud / Incendio)",
-            "Detalle_Objeto": "Texto (ej: Marca Modelo Año del vehículo o descripción del riesgo)",
-            "Sub_Modelo": "Texto (ej: SE, XL, Sport, etc., si aplica)",
+            "Ramo": "Texto (ej: Vehículos de Motor / Incendio y Aliados / Salud)",
+            "Detalle_Objeto": "Texto (ej: Dirección del riesgo asegurado, o Marca/Modelo/Año si es auto)",
+            "Sub_Modelo": "Texto (ej: SE, XL, Sport / o Descripción del bloque edificado si aplica)",
             "Suma_Asegurada_RD": 0,
-            "Valor_Mercado_o_Limite": 0,  # Aquí va el valor promedio real encontrado en internet (ej: supercarros)
-            "Brecha": 0,                  # Cálculo matemático: (Valor_Mercado_o_Limite - Suma_Asegurada_RD)
-            "Estatus": "Requiere Aumento / Correcto / Omitir - Solo Ley",
-            "Nota_Auditoria": "Texto breve descriptivo (ej: 'Valor en mercado RD ronda los RD$X, en póliza está por debajo')",
+            "Valor_Market_o_Limite": 0,  
+            "Brecha": 0,                  
+            "Estatus": "Requiere Aumento / Correcto / Omitir - Solo Ley / Requiere Revisión y Negociación",
+            "Nota_Auditoria": "Texto descriptivo detallado. Si es Incendio, detalla de forma exhaustiva: 1. ¿Incluye Valor de Reposición? 2. ¿Incluye Combustión Espontánea? 3. Deducible de Incendio y su % (marcando la necesidad de negociación si existe). 4. Detalle completo de todas las coberturas aliadas encontradas.",
             "Fecha_Analisis": "({datetime.datetime.now().strftime('%d/%m/%Y')})"
         }}
         """
         
-        # Llamada al modelo Gemini 3.5 Flash activando la herramienta nativa de búsqueda de Google
+        # Llamada a Gemini 3.5 Flash con Google Search Grounding activo
         response = client_gemini.models.generate_content(
             model='gemini-3.5-flash',
             contents=[
@@ -132,20 +138,20 @@ def analizar_con_gemini_worker(token_info, file_id, file_name):
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 response_mime_type="application/json",
-                temperature=0.15,  # Precisión matemática y técnica para mitigar alucinaciones
-                tools=[types.Tool(google_search=types.GoogleSearch())]  # Grounding en vivo activado
+                temperature=0.15,
+                tools=[types.Tool(google_search=types.GoogleSearch())]
             )
         )
         
         resultado = json.loads(response.text)
-        return resultado if isinstance(resultado, dict) else {"Archivo": file_name, "Estatus": "Error: Formato estructurado corrupto"}
+        return resultado if isinstance(resultado, dict) else {"Archivo": file_name, "Estatus": "Error: Formato de datos corrupto"}
             
     except Exception as e:
         return {"Archivo": file_name, "Estatus": f"Error en procesamiento: {str(e)}"}
 
 # --- 4. INTERFAZ DE USUARIO (STREAMLIT) ---
 st.set_page_config(page_title="D&D Auditoría IA", layout="wide", page_icon="🛡️")
-st.title("🛡️ Auditoría Integral v9.1")
+st.title("🛡️ Auditoría Integral v9.4")
 
 MESES_DICT = {"1":"01- Enero","2":"02- Febrero","3":"03- Marzo","4":"04- Abril","5":"05- Mayo","6":"06- Junio",
               "7":"07- Julio","8":"08- Agosto","9":"09- Septiembre","10":"10- Octubre","11":"11- Noviembre","12":"12- Diciembre"}
@@ -221,7 +227,6 @@ with t1:
             pendientes = st.session_state['pendientes']
             total_pendientes = len(pendientes)
             
-            # Ajuste de carga concurrente (5 análisis simultáneos para optimizar velocidad y cuotas de red)
             CONCURRENT_WORKERS = 5
             st.info(f"Procesando hilos de ejecución en lotes concurrentes de {CONCURRENT_WORKERS}...")
             
@@ -240,26 +245,23 @@ with t1:
                     try:
                         res_ia = futuro.result()
                         if res_ia and isinstance(res_ia, dict):
-                            if "Omitir" not in str(res_ia.get('Estatus', '')):
-                                lote.append(res_ia)
-                            else:
-                                lote.append({"Archivo": archivo_info['name'], "Estatus": "Omitido por regla de negocio"})
+                            lote.append(res_ia)
                         else:
-                            lote.append({"Archivo": archivo_info['name'], "Estatus": "Error: Formato inválido"})
+                            lote.append({"Archivo": archivo_info['name'], "Estatus": "Error: Estructura corrupta"})
                     except Exception as exc:
                         lote.append({"Archivo": archivo_info['name'], "Estatus": f"Falla crítica en hilo: {exc}"})
                     
-                    # --- OPTIMIZACIÓN DE I/O: Guardado periódico inteligente cada 5 archivos ---
+                    # Guardado periódico inteligente cada 5 archivos
                     if contador_completados % 5 == 0 or contador_completados == total_pendientes:
                         status.markdown(f"💾 Respaldando lote de progreso en Google Drive... ({contador_completados}/{total_pendientes})")
                         guardar_job_file(servicio, lote, nombre_reporte)
                     
-                    status.markdown(f"**Analizando con Búsqueda Web:** `{archivo_info['name']}` ({contador_completados}/{total_pendientes})")
+                    status.markdown(f"**Procesando:** `{archivo_info['name']}` ({contador_completados}/{total_pendientes})")
                     progreso.progress(contador_completados / total_pendientes)
             
             st.session_state['pendientes'] = []
             st.session_state['lote_historial'] = lote
-            st.success("🎉 ¡Proceso de auditoría por lotes concurrentes y búsqueda en vivo finalizado con éxito!")
+            st.success("🎉 ¡Proceso de auditoría multi-ramo finalizado con éxito!")
 
 with t2:
     if 'total_pdfs' in st.session_state:
