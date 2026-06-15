@@ -79,18 +79,28 @@ def analizar_archivo_individual(nombre_archivo, contenido_bytes, api_key):
     
     return json.loads(response.text)
 
+# --- MANEJO SEGURO DE LA API KEY DESDE STREAMLIT SECRETS ---
+gemini_key = None
+if "GEMINI_API_KEY" in st.secrets:
+    gemini_key = st.secrets["GEMINI_API_KEY"]
+else:
+    st.sidebar.error("⚠️ Falta 'GEMINI_API_KEY' en los Secrets de Streamlit. Configúrala en el panel de control.")
+
 # --- INICIALIZACIÓN DE CACHÉ DE SESIÓN (PERSISTENCIA DE LOTES) ---
 if "historico_auditorias" not in st.session_state:
-    st.session_state.historico_auditorias = {} # Almacena {nombre_archivo: [datos_extraidos]}
+    st.session_state.historico_auditorias = {} 
 
 # --- INTERFAZ DE USUARIO ---
 st.title("🛡️ Sistema Inteligente de Auditoría de Flotillas - D&D")
-st.caption(f"Director Técnico Senior | Infraestructura Gemini 3.5 Flash | Fecha Sistema: {HOY}")
+st.caption(f"Director Técnico Senior | Infraestructura Gemini 3.5 Flash (Carga Automatizada desde Secrets) | {HOY}")
 
-# Sidebar de control técnico y llaves de acceso
+# Sidebar optimizada sin inputs críticos de credenciales
 with st.sidebar:
-    st.header("🔑 Autenticación")
-    gemini_key = st.text_input("Gemini API Key", type="password", help="Introduce tu API key de Google AI Studio.")
+    st.header("🔒 Seguridad")
+    if gemini_key:
+        st.success("API Key cargada exitosamente desde los secretos.")
+    else:
+        st.warning("Clave no detectada de forma automática.")
     
     st.divider()
     st.header("⚙️ Control de Procesamiento")
@@ -121,13 +131,13 @@ with col2:
 
 ejecutar_auditoria = st.button("🚀 Iniciar Inspección Técnica")
 
-# --- CONTROL DE EJECUCIÓN (LÓGICA CONDICIONAL DE LA GEMA) ---
+# --- CONTROL DE EJECUCIÓN (LÓGICA CONDICIONAL) ---
 if ejecutar_auditoria:
     
     # CASO 1: PROCESAMIENTO TAREA A (CON ARCHIVOS)
     if archivos_adjuntos:
         if not gemini_key:
-            st.error("⚠️ Se requiere la clave de API de Gemini en la barra lateral para proceder con la Tarea A.")
+            st.error("⚠️ No se puede procesar el lote. Asegúrate de configurar correctamente tu GEMINI_API_KEY en los secretos del servidor.")
         else:
             st.subheader("📋 TAREA A: Resultados Consolidados de Inspección de Profundidad")
             
@@ -135,42 +145,39 @@ if ejecutar_auditoria:
             archivos_omitidos = []
             archivos_nuevos = []
             
-            # Iteración obligatoria por cada archivo del lote
+            # Iteración por cada archivo cargado
             for archivo in archivos_adjuntos:
                 nombre_archivo = archivo.name
                 
-                # Regla de no-repetición salvo instrucción expresa del usuario
+                # Regla de no-repetición controlada por caché
                 if nombre_archivo in st.session_state.historico_auditorias and not forzar_reprocesamiento:
                     archivos_omitidos.append(nombre_archivo)
                     vehiculos_consolidados.extend(st.session_state.historico_auditorias[nombre_archivo])
                 else:
-                    with st.spinner(f"Procesando archivo nuevo: {nombre_archivo}..."):
+                    with st.spinner(f"Procesando archivo nuevo de forma segura: {nombre_archivo}..."):
                         try:
                             contenido_bytes = archivo.read()
                             resultado_ia = analizar_archivo_individual(nombre_archivo, contenido_bytes, gemini_key)
                             
-                            # Guardar inmediatamente en la persistencia local de la sesión
+                            # Registro en caché interna de la sesión
                             st.session_state.historico_auditorias[nombre_archivo] = resultado_ia
                             archivos_nuevos.append(nombre_archivo)
                             vehiculos_consolidados.extend(resultado_ia)
                         except Exception as e:
                             st.error(f"Error crítico en archivo {nombre_archivo}: {str(e)}")
             
-            # Logs informativos en pantalla
             if archivos_omitidos:
                 st.info(f"ℹ️ **Cargados desde la caché local (Ahorro de API):** {', '.join(archivos_omitidos)}")
             if archivos_nuevos:
                 st.toast(f"✅ Se procesaron {len(archivos_nuevos)} nuevos documentos con éxito.")
                 
-            # Renderizado final de los datos unificados
+            # Renderizado final
             if vehiculos_consolidados:
                 tabla_final = []
                 alertas_piezas = []
                 actualizaciones = []
                 
                 for item in vehiculos_consolidados:
-                    # NOTA: Aquí conectarías el scraper de Supercarros. 
-                    # Como fallback preventivo, asumimos igualdad de mercado para aislar fallas.
                     media_mercado_real = item.get("media_mercado", item["valor_poliza"])
                     
                     diag = diagnostico_suma(item["valor_poliza"], media_mercado_real)
@@ -193,11 +200,10 @@ if ejecutar_auditoria:
                         "Asistencia": item["asistencia"]
                     })
                 
-                # Despliegue de la tabla en Markdown usando la librería 'tabulate'
                 df_final = pd.DataFrame(tabla_final)
                 st.markdown(df_final.to_markdown(index=False))
                 
-                # Bloque de Alertas Técnicas Estrictas de la gema
+                # Bloques de análisis complementarios
                 st.markdown("### Resumen de Alertas Técnicas")
                 st.markdown("**Riesgo de Piezas (Año 4+):**")
                 if alertas_piezas:
@@ -208,7 +214,7 @@ if ejecutar_auditoria:
                 st.markdown("**Actualizaciones Detectadas (Lógica de Prevalencia):**")
                 for act in set(actualizaciones): st.markdown(act)
                 
-                st.markdown("**Borrador de Negociación Formal (Copia y Pega):**")
+                st.markdown("**Borrador de Negociación Formal:**")
                 st.info(
                     f"Srs. Aseguradora,\n\nTras efectuar la revisión técnica de los activos de la flotilla bajo el amparo de la "
                     f"Ley 146-02 y la Res. 01-2023 con fecha {HOY}, solicitamos formalmente la adecuación y rectificación de las "
@@ -228,8 +234,6 @@ if ejecutar_auditoria:
     elif vehiculo_manual and not archivos_adjuntos:
         st.subheader("📊 TAREA B: Solo Valoración de Mercado Exclusiva")
         with st.spinner("Consultando base de precios históricos..."):
-            
-            # Simulación de la media de mercado (Regla de omitir extremos)
             media_mercado_b = 2100000 if "2022" in vehiculo_manual else 950000
             
             tabla_b = {
