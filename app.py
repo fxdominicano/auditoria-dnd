@@ -63,7 +63,7 @@ def analizar_bloque_unificado(bytes_pdf_unificado, api_key):
     REGLA DE PROPAGACIÓN: Debes aplicar los límites globales de RC Exceso, CAA/CMA y Asistencias encontrados en las primeras páginas a TODOS Y CADA UNO de los vehículos enumerados en las páginas de listado, a menos que un vehículo específico tenga un límite distinto detallado en su propia fila. No los dejes como [NO IDENTIFICADO] si el límite global está al inicio del documento.
 
     DETECCIÓN DE VALOR ASEGURADO (EVITAR FALSOS POSITIVOS):
-    - Extrae con precisión el valor monetario asignado al vehículo bajo los conceptos de "Casco", "Suma Asegurada", "Valor Declarado", "Cobertura Comprensiva" o "Colisión y Vuelco". 
+    - Extrae con precisión el valor monetario asignado al vehículo bajo los conceptos de "Casco", "Suma Asegurada", "Valor Estimado", "Valor Declarado", "Comprensivo", "Cobertura Comprensiva", "Colisión y Vuelco", "Incendio y Robo". 
     - Si un vehículo de gama alta (ej: Land Cruiser, Lexus, Tahoe) o comercial presenta un valor millonario (ej: 7,514,000.00), extrae esa cifra completa en 'valor_poliza' y marca 'tipo_cobertura' como "Full".
     - SÓLO marcarás un vehículo como "Ley / Sencillo" si el valor del Casco es explícitamente 0, no contratado, o si la póliza indica que es un plan básico de solo daños a terceros.
 
@@ -157,7 +157,6 @@ if ejecutar_auditoria:
                         pdf_reader = pypdf.PdfReader(io.BytesIO(contenido_bytes))
                         total_paginas = len(pdf_reader.pages)
                         
-                        # 1. EXTRACCIÓN DE LAS PRIMERAS 3 PÁGINAS (CONTEXTO MAESTRO)
                         paginas_maestras = min(3, total_paginas)
                         
                         resultados_completos_archivo = []
@@ -167,19 +166,17 @@ if ejecutar_auditoria:
                         b_inicio = 0
                         num_bloque = 1
                         
-                        # 2. BUCLE INDUSTRIAL CON INYECCIÓN DE CONTEXTO GLOBAL
                         while b_inicio < total_paginas:
                             b_fin = min(b_inicio + paginas_por_bloque, total_paginas)
                             
-                            # Crear un nuevo PDF en memoria combinando el Contexto Maestro + Bloque de unidades
                             pdf_writer_unificado = pypdf.PdfWriter()
                             
-                            # Añadir siempre las páginas de condiciones generales (0, 1, 2)
-                            for p_m en range(paginas_maestras):
+                            # CORREGIDO: Cambio de 'en' a 'in'
+                            for p_m in range(paginas_maestras):
                                 pdf_writer_unificado.add_page(pdf_reader.pages[p_m])
                                 
-                            # Añadir las páginas del bloque de vehículos actual (evitando duplicar si el bloque toca las primeras páginas)
-                            for p_v en range(b_inicio, b_fin):
+                            # CORREGIDO: Cambio de 'en' a 'in'
+                            for p_v in range(b_inicio, b_fin):
                                 if p_v >= paginas_maestras:
                                     pdf_writer_unificado.add_page(pdf_reader.pages[p_v])
                                     
@@ -187,19 +184,17 @@ if ejecutar_auditoria:
                             pdf_writer_unificado.write(buffer_unificado)
                             bytes_pdf_unificado = buffer_unificado.getvalue()
                             
-                            # Enviar el PDF blindado con contexto a Gemini
                             with st.spinner(f"Analizando {nombre_archivo} | Procesando bloque {b_inicio+1} a {b_fin} con Contexto Global..."):
-                                datos_bloque = analizar_bloque_pdf_unificado = analizar_archivo_individual = analizar_bloque_pdf = analizar_bloque_unificado(bytes_pdf_unificado, gemini_key)
+                                # CORREGIDO: Limpieza de asignaciones múltiples redundantes
+                                datos_bloque = analizar_bloque_unificado(bytes_pdf_unificado, gemini_key)
                                 resultados_completos_archivo.extend(datos_bloque)
                                 
                             if b_fin == total_paginas: break
                             b_inicio = b_fin - overlap
                             num_bloque += 1
                             
-                        # 3. ALGORITMO DE DEDUPLICACIÓN TÉCNICA POR PLATAFORMA DE SEGURIDAD (CHASIS O NOMBRE)
                         vistos = {}
                         for item in resultados_completos_archivo:
-                            # Creamos una llave única robusta basada en chasis/placa o combinación exacta de datos
                             chasis_clean = str(item.get("chasis_placa", "")).strip().lower()
                             vehiculo_clean = str(item.get("vehículo", "")).strip().lower()
                             
@@ -208,7 +203,6 @@ if ejecutar_auditoria:
                             if llave_unica not in vistos:
                                 vistos[llave_unica] = item
                             else:
-                                # Regla de Prevalencia: Mantener el registro que logró capturar el valor del Casco mayor a cero
                                 try:
                                     val_nuevo = float(item.get("valor_poliza", 0))
                                     val_existente = float(vistos[llave_unica].get("valor_poliza", 0))
@@ -253,7 +247,6 @@ if ejecutar_auditoria:
                     if item.get("nota_fiscal"):
                         notas_fiscales.append(f"- **{item.get('vehículo')}**: {item.get('nota_fiscal')}")
                         
-                    # Formateo antimutación para evitar notación científica (5e+06)
                     rc_exceso_raw = item.get("rc_exceso", "[NO IDENTIFICADO]")
                     try:
                         clean_rc = str(rc_exceso_raw).replace("RD$", "").replace("$", "").replace(",", "").strip()
@@ -277,7 +270,6 @@ if ejecutar_auditoria:
                 df_final = pd.DataFrame(tabla_final)
                 st.markdown(df_final.to_markdown(index=False))
                 
-                # --- REPORTES FORMALES DE LA GEMA ---
                 st.markdown("### Resumen de Alertas Técnicas")
                 st.markdown("**Riesgo de Piezas (Año 4+):**")
                 if alertas_piezas:
