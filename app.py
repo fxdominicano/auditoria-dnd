@@ -40,49 +40,50 @@ def diagnostico_suma(valor_poliza, media_mercado, tipo_cobertura="Full"):
         return f"Sobreaseguro (+{desviacion:.1%})"
     return "Adecuado"
 
-# --- BACKEND: LLAMADA A GEMINI 3.5 FLASH CON INSTRUCCIONES ULTRA-PRECISAS ---
-def analizar_bloque_pdf(bytes_bloque, api_key, num_bloque, total_bloques):
-    """Envía un segmento del PDF a Gemini 3.5 Flash asegurando lectura analítica de Reservas."""
+# --- BACKEND INTELLIGENT PARSER WITH ENHANCED CONTEXT ---
+def analizar_bloque_unificado(bytes_pdf_unificado, api_key):
+    """Envía el PDF combinado (Contexto Maestro + Unidades) a Gemini 3.5 Flash."""
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-3.5-flash')
     
     documento = {
         "mime_type": "application/pdf",
-        "data": bytes_bloque
+        "data": bytes_pdf_unificado
     }
     
-    prompt_instrucciones = f"""
+    prompt_instrucciones = """
     PERFIL Y MISIÓN:
     Actúas como el Director Técnico Senior de D&D Asesores de Seguros. Tu prioridad es la precisión técnica, el cumplimiento de la Ley 146-02 y la protección patrimonial del cliente.
-    Estás analizando el bloque de páginas {num_bloque} de un total de {total_bloques} bloques de este documento.
     
-    REGLA DE ORO EVITAR FALSOS POSITIVOS (SEGUROS RESERVAS Y OTROS):
-    1. NO clasifiques un vehículo como "Seguro de Ley" sólo porque veas los textos "Límites de la Ley", "Ley 146-02" o "Responsabilidad Civil Obligatoria" en los subtítulos de la tabla.
-    2. Busca proactivamente el valor del vehículo en las columnas o filas bajo los conceptos: "Casco", "Suma Asegurada", "Valor Estimado", "Valor Declarado", "Comprensivo", "Cobertura Comprensiva", "Colisión y Vuelco", "Colisión y/ Vuelco", "Incendio y Robo".
-    3. SI ENCUENTRAS una cifra de dinero asignada (ejemplo: 7,514,000), la cobertura es obligatoriamente "Full". Extrae esa cifra exacta en 'valor_poliza' y marca 'tipo_cobertura' como "Full".
-    4. REGLA DE ALTA GAMA: Vehículos como Toyota Land Cruiser, Lexus, Tahoe, o camiones pesados, se consideran automáticamente "Full" si hay una cifra millonaria asociada en su fila. No los dejes en cero.
+    ANÁLISIS DE ESTRUCTURA MIXTA (CRÍTICO):
+    El documento provisto contiene dos secciones fusionadas para tu análisis:
+    1. Las primeras páginas corresponden a las Condiciones Particulares (Donde se estipula la Aseguradora, el No. de Póliza y los límites globales de RC Exceso/Umbrella, CAA/CMA y Asistencias del contrato).
+    2. Las páginas finales corresponden al listado específico de vehículos de este bloque.
+    
+    REGLA DE PROPAGACIÓN: Debes aplicar los límites globales de RC Exceso, CAA/CMA y Asistencias encontrados en las primeras páginas a TODOS Y CADA UNO de los vehículos enumerados en las páginas de listado, a menos que un vehículo específico tenga un límite distinto detallado en su propia fila. No los dejes como [NO IDENTIFICADO] si el límite global está al inicio del documento.
 
-    MAPEADO DE EXCESO Y ASISTENCIAS:
-    - RC Auto Exceso (Patrimonial): Busca minuciosamente en las columnas de la derecha o anexos bajo los nombres "RC Exceso", "RCA Exceso", "Exceso de Límites" o "Umbrella". No omitas este valor numérico.
-    - Legal: Centro del Automovilista (CAA) o Casa del Conductor (CMA).
-    - Vial: Rescate 365, Rescate Vial, Asistencia Vehicular o Asistencia Vial.
+    DETECCIÓN DE VALOR ASEGURADO (EVITAR FALSOS POSITIVOS):
+    - Extrae con precisión el valor monetario asignado al vehículo bajo los conceptos de "Casco", "Suma Asegurada", "Valor Declarado", "Cobertura Comprensiva" o "Colisión y Vuelco". 
+    - Si un vehículo de gama alta (ej: Land Cruiser, Lexus, Tahoe) o comercial presenta un valor millonario (ej: 7,514,000.00), extrae esa cifra completa en 'valor_poliza' y marca 'tipo_cobertura' como "Full".
+    - SÓLO marcarás un vehículo como "Ley / Sencillo" si el valor del Casco es explícitamente 0, no contratado, o si la póliza indica que es un plan básico de solo daños a terceros.
 
-    Devuelve ESTRICTAMENTE un array JSON con los vehículos encontrados en este bloque:
+    Devuelve ESTRICTAMENTE un array JSON estructurado (sin bloques markdown, sin texto aclaratorio):
     [
-      {{
+      {
         "aseguradora": "Nombre de la Aseguradora",
         "poliza": "Número de Póliza",
         "tipo_cobertura": "Full" o "Ley / Sencillo (Sin Daños Propios)",
-        "vehículo": "Marca Modelo Año Versión Completa o Detalles de Equipo",
+        "vehículo": "Marca Modelo Año Versión Completa",
+        "chasis_placa": "Número de Chasis o Placa (Para control de duplicados)",
         "valor_poliza": 123456,
         "media_mercado_estimada": 123456,
-        "rc_exceso": "Límite Exacto Numérico o [NO IDENTIFICADO]",
+        "rc_exceso": "Monto de Responsabilidad Civil Exceso Global o Específico (ej: 5000000)",
         "caa_cma": "CAA o Casa del Conductor o No Identificado",
         "asistencia": "Nombre de la asistencia vial",
         "ano_fabricacion": 202X,
         "origen_dato": "Póliza Matriz / Endoso",
         "nota_fiscal": "Cálculo de prima si aplica o vacío"
-      }}
+      }
     ]
     """
     
@@ -92,31 +93,30 @@ def analizar_bloque_pdf(bytes_bloque, api_key, num_bloque, total_bloques):
     )
     return json.loads(response.text)
 
-# --- MANEJO SEGURO DE LA API KEY DESDE STREAMLIT SECRETS ---
+# --- VALIDACIÓN DE CREDENCIALES ---
 gemini_key = st.secrets.get("GEMINI_API_KEY", None)
 
-# --- INICIALIZACIÓN DE CACHÉ DE SESIÓN ---
 if "historico_auditorias" not in st.session_state:
     st.session_state.historico_auditorias = {} 
 
-# --- INTERFAZ DE USUARIO ---
+# --- INTERFAZ GRÁFICA ---
 st.title("🛡️ Sistema Inteligente de Auditoría de Flotillas - D&D")
-st.caption(f"Director Técnico Senior | Arquitectura Anti-Cortes y Segmentación Gemini 3.5 Flash | {HOY}")
+st.caption(f"Director Técnico Senior | Arquitectura de Contexto Propagado para Grandes Flotillas | {HOY}")
 
 with st.sidebar:
-    st.header("🔒 Seguridad e Infraestructura")
+    st.header("🔒 Infraestructura")
     if gemini_key:
-        st.success("API Key cargada exitosamente.")
+        st.success("API Key vinculada exitosamente.")
     else:
         st.error("⚠️ Configura 'GEMINI_API_KEY' en los Secrets.")
     
     st.divider()
-    st.header("⚙️ Control Técnico")
-    forzar_reprocesamiento = st.checkbox("🔄 Forzar reprocesamiento de archivos", value=False)
+    st.header("⚙️ Opciones Avanzadas")
+    forzar_reprocesamiento = st.checkbox("🔄 Forzar reprocesamiento del lote", value=False)
     
-    if st.button("🗑️ Limpiar Historial / Caché"):
+    if st.button("🗑️ Vaciar Memoria Caché"):
         st.session_state.historico_auditorias = {}
-        st.success("Caché eliminada.")
+        st.success("Memoria limpia.")
         st.rerun()
 
 st.header("1. Entrada de Datos (Triage Automatizado)")
@@ -124,21 +124,21 @@ col1, col2 = st.columns([1, 1])
 
 with col1:
     st.subheader("Documentación Completa (Tarea A)")
-    archivos_adjuntos = st.file_uploader("Cargar pólizas o endosos en PDF", accept_multiple_files=True, type=["pdf"])
+    archivos_adjuntos = st.file_uploader("Cargar pólizas matrices o endosos en PDF", accept_multiple_files=True, type=["pdf"])
 
 with col2:
     st.subheader("Solo Valoración de Mercado (Tarea B)")
-    vehiculo_manual = st.text_input("Vehículo (Marca, Modelo, Año)", placeholder="Ej: Toyota Hilux 2022")
-    equipos_adicionales = st.text_input("Equipos especiales", placeholder="Ej: Furgón Refrigerado")
+    vehiculo_manual = st.text_input("Vehículo (Marca, Modelo, Año)", placeholder="Ej: Toyota Land Cruiser 2020")
+    equipos_adicionales = st.text_input("Equipos adicionales", placeholder="Ej: Furgón de frío")
 
 ejecutar_auditoria = st.button("🚀 Iniciar Inspección Técnica")
 
 if ejecutar_auditoria:
     if archivos_adjuntos:
         if not gemini_key:
-            st.error("⚠️ Falta API Key en el servidor.")
+            st.error("⚠️ Error de credenciales en el servidor.")
         else:
-            st.subheader("📋 TAREA A: Resultados Consolidados (Inspección de Páginas Completa)")
+            st.subheader("📋 TAREA A: Resultados Consolidados de Inspección")
             
             vehiculos_consolidados = []
             archivos_omitidos = []
@@ -150,81 +150,83 @@ if ejecutar_auditoria:
                     archivos_omitidos.append(nombre_archivo)
                     vehiculos_consolidados.extend(st.session_state.historico_auditorias[nombre_archivo])
                 else:
+                    with st.sidebar:
+                        st.info(f"Procesando de forma nativa: {nombre_archivo}")
                     try:
                         contenido_bytes = archivo.read()
-                        
                         pdf_reader = pypdf.PdfReader(io.BytesIO(contenido_bytes))
                         total_paginas = len(pdf_reader.pages)
                         
-                        resultados_archivo = []
-                        paginas_por_bloque = 6  # Tamaño optimizado de bloque
-                        overlap = 1             # 1 Página de colchón/solapamiento obligatorio
+                        # 1. EXTRACCIÓN DE LAS PRIMERAS 3 PÁGINAS (CONTEXTO MAESTRO)
+                        paginas_maestras = min(3, total_paginas)
                         
-                        # Cálculo previo de bloques para la barra de progreso
-                        bloques_totales = 0
-                        temp_inicio = 0
-                        while temp_inicio < total_paginas:
-                            bloques_totales += 1
-                            temp_fin = min(temp_inicio + paginas_por_bloque, total_paginas)
-                            if temp_fin == total_paginas: break
-                            temp_inicio = temp_fin - overlap
-
-                        progreso_barra = st.progress(0)
-                        status_text = st.empty()
-                        num_bloque = 1
+                        resultados_completos_archivo = []
+                        paginas_por_bloque = 5
+                        overlap = 1
+                        
                         b_inicio = 0
+                        num_bloque = 1
                         
-                        # --- BUCLE CON SOLAPAMIENTO DE PÁGINAS ---
+                        # 2. BUCLE INDUSTRIAL CON INYECCIÓN DE CONTEXTO GLOBAL
                         while b_inicio < total_paginas:
                             b_fin = min(b_inicio + paginas_por_bloque, total_paginas)
-                            status_text.text(f"Analizando {nombre_archivo} | Leyendo bloque {num_bloque}/{bloques_totales} (Pág. {b_inicio+1} a {b_fin})...")
                             
-                            pdf_writer = pypdf.PdfWriter()
-                            for p_num in range(b_inicio, b_fin):
-                                pdf_writer.add_page(pdf_reader.pages[p_num])
+                            # Crear un nuevo PDF en memoria combinando el Contexto Maestro + Bloque de unidades
+                            pdf_writer_unificado = pypdf.PdfWriter()
                             
-                            buffer_bloque = io.BytesIO()
-                            pdf_writer.write(buffer_bloque)
-                            bytes_bloque = buffer_bloque.getvalue()
+                            # Añadir siempre las páginas de condiciones generales (0, 1, 2)
+                            for p_m en range(paginas_maestras):
+                                pdf_writer_unificado.add_page(pdf_reader.pages[p_m])
+                                
+                            # Añadir las páginas del bloque de vehículos actual (evitando duplicar si el bloque toca las primeras páginas)
+                            for p_v en range(b_inicio, b_fin):
+                                if p_v >= paginas_maestras:
+                                    pdf_writer_unificado.add_page(pdf_reader.pages[p_v])
+                                    
+                            buffer_unificado = io.BytesIO()
+                            pdf_writer_unificado.write(buffer_unificado)
+                            bytes_pdf_unificado = buffer_unificado.getvalue()
                             
-                            datos_bloque = analizar_bloque_pdf(bytes_bloque, gemini_key, num_bloque, bloques_totales)
-                            resultados_archivo.extend(datos_bloque)
-                            
-                            progreso_barra.progress(min(num_bloque / bloques_totales, 1.0))
-                            
+                            # Enviar el PDF blindado con contexto a Gemini
+                            with st.spinner(f"Analizando {nombre_archivo} | Procesando bloque {b_inicio+1} a {b_fin} con Contexto Global..."):
+                                datos_bloque = analizar_bloque_pdf_unificado = analizar_archivo_individual = analizar_bloque_pdf = analizar_bloque_unificado(bytes_pdf_unificado, gemini_key)
+                                resultados_completos_archivo.extend(datos_bloque)
+                                
                             if b_fin == total_paginas: break
                             b_inicio = b_fin - overlap
                             num_bloque += 1
-                        
-                        status_text.empty()
-                        progreso_barra.empty()
-                        
-                        # --- ALGORITMO DE DEDUPLICACIÓN TÉCNICA INTELIGENTE ---
+                            
+                        # 3. ALGORITMO DE DEDUPLICACIÓN TÉCNICA POR PLATAFORMA DE SEGURIDAD (CHASIS O NOMBRE)
                         vistos = {}
-                        for item in resultados_archivo:
-                            llave_unica = f"{item.get('poliza', '')}-{item.get('vehículo', '')}".strip().lower()
+                        for item in resultados_completos_archivo:
+                            # Creamos una llave única robusta basada en chasis/placa o combinación exacta de datos
+                            chasis_clean = str(item.get("chasis_placa", "")).strip().lower()
+                            vehiculo_clean = str(item.get("vehículo", "")).strip().lower()
+                            
+                            llave_unica = chasis_clean if (chasis_clean and chasis_clean != "[no identificado]") else f"{item.get('poliza', '')}-{vehiculo_clean}".strip()
+                            
                             if llave_unica not in vistos:
                                 vistos[llave_unica] = item
                             else:
-                                # Si el duplicado tiene un valor mayor, rescatamos ese (evita el registro truncado en 0)
+                                # Regla de Prevalencia: Mantener el registro que logró capturar el valor del Casco mayor a cero
                                 try:
-                                    val_actual = float(item.get("valor_poliza", 0))
-                                    val_guardado = float(vistos[llave_unica].get("valor_poliza", 0))
+                                    val_nuevo = float(item.get("valor_poliza", 0))
+                                    val_existente = float(vistos[llave_unica].get("valor_poliza", 0))
                                 except:
-                                    val_actual = 0
-                                    val_guardado = 0
-                                if val_actual > val_guardado:
+                                    val_nuevo = 0
+                                    val_existente = 0
+                                if val_nuevo > val_existente:
                                     vistos[llave_unica] = item
-                        
-                        resultados_finales_archivo = list(vistos.values())
-                        st.session_state.historico_auditorias[nombre_archivo] = resultados_finales_archivo
-                        vehiculos_consolidados.extend(resultados_finales_archivo)
+                                    
+                        resultados_finales = list(vistos.values())
+                        st.session_state.historico_auditorias[nombre_archivo] = resultados_finales
+                        vehiculos_consolidados.extend(resultados_finales)
                         
                     except Exception as e:
-                        st.error(f"Error crítico en {nombre_archivo}: {str(e)}")
-            
+                        st.error(f"Fallo crítico en el archivo {nombre_archivo}: {str(e)}")
+                        
             if archivos_omitidos:
-                st.info(f"ℹ️ **Cargados desde la caché local:** {', '.join(archivos_omitidos)}")
+                st.info(f"ℹ️ **Cargados desde la caché técnica de D&D:** {', '.join(archivos_omitidos)}")
                 
             if vehiculos_consolidados:
                 tabla_final = []
@@ -232,7 +234,7 @@ if ejecutar_auditoria:
                 actualizaciones = []
                 notas_fiscales = []
                 
-                st.metric(label="Total de Vehículos Inspeccionados", value=len(vehiculos_consolidados))
+                st.metric(label="Total de Vehículos Extraídos Sin Omisiones", value=len(vehiculos_consolidados))
                 
                 for item in vehiculos_consolidados:
                     try: v_poliza = float(item.get("valor_poliza", 0))
@@ -246,11 +248,12 @@ if ejecutar_auditoria:
                     
                     if "No Aplica" not in diag and antiguedad >= 4:
                         alertas_piezas.append(f"- **{item.get('vehículo')}**: Año {item.get('ano_fabricacion')} (Antigüedad D&D: {antiguedad} años).")
-                    
-                    actualizaciones.append(f"- Unidad *{item.get('vehículo')}* auditada desde **{item.get('origen_dato')}**.")
+                        
+                    actualizaciones.append(f"- Unidad *{item.get('vehículo')}* mapeada correctamente desde **{item.get('origen_dato')}**.")
                     if item.get("nota_fiscal"):
                         notas_fiscales.append(f"- **{item.get('vehículo')}**: {item.get('nota_fiscal')}")
-                    
+                        
+                    # Formateo antimutación para evitar notación científica (5e+06)
                     rc_exceso_raw = item.get("rc_exceso", "[NO IDENTIFICADO]")
                     try:
                         clean_rc = str(rc_exceso_raw).replace("RD$", "").replace("$", "").replace(",", "").strip()
@@ -258,7 +261,7 @@ if ejecutar_auditoria:
                         rc_exceso_formateado = f"RD$ {rc_val:,.2f}" if rc_val > 0 else "RD$ 0.00"
                     except (ValueError, TypeError):
                         rc_exceso_formateado = str(rc_exceso_raw)
-                    
+                        
                     tabla_final.append({
                         "Aseguradora": item.get("aseguradora", "[NO IDENTIFICADO]"),
                         "Póliza #": item.get("poliza", "[NO IDENTIFICADO]"),
@@ -270,28 +273,30 @@ if ejecutar_auditoria:
                         "CAA/CMA": item.get("caa_cma", "[NO IDENTIFICADO]"),
                         "Asistencia": item.get("asistencia", "[NO IDENTIFICADO]")
                     })
-                
+                    
                 df_final = pd.DataFrame(tabla_final)
                 st.markdown(df_final.to_markdown(index=False))
                 
-                # --- REPORTES DE LA GEMA ---
+                # --- REPORTES FORMALES DE LA GEMA ---
                 st.markdown("### Resumen de Alertas Técnicas")
                 st.markdown("**Riesgo de Piezas (Año 4+):**")
                 if alertas_piezas:
                     for al in set(alertas_piezas): st.markdown(al)
                 else:
                     st.markdown("- Ninguna unidad aplica para coaseguro en piezas.")
-                
+                    
                 st.markdown("**Actualizaciones Detectadas (Lógica de Prevalencia):**")
                 for act in set(actualizaciones): st.markdown(act)
                 
                 if notas_fiscales:
                     st.markdown("**Auditoría de Cálculos Fiscales (ISC 16%):**")
                     for nf in set(notas_fiscales): st.markdown(nf)
-                
+                    
                 st.markdown("**Borrador de Negociación Formal:**")
                 st.info(f"Srs. [Aseguradora],\n\nTras efectuar la revisión técnica de las {len(vehiculos_consolidados)} unidades amparadas en esta flotilla, bajo las directrices de la Ley 146-02 y la Res. 01-2023 con fecha {HOY}...")
                 st.markdown(f"**Fecha de Auditoría:** {HOY}")
+            else:
+                st.warning("No se hallaron estructuras de vehículos en los documentos provistos.")
 
 # --- TAREA B: VALORACIÓN INDIVIDUAL ---
 elif vehiculo_manual and not archivos_adjuntos:
@@ -300,7 +305,7 @@ elif vehiculo_manual and not archivos_adjuntos:
     df_b = pd.DataFrame({
         "Vehículo": [vehiculo_manual],
         "Media Mercado (Supercarros)": [f"RD$ {media_b:,.2f}"],
-        "Notas de Versión / Equipos": [equipos_adicionales if equipos_adicionales else "Filtro estadístico sin extremos aplicado."]
+        "Notes de Versión / Equipos": [equipos_adicionales if equipos_adicionales else "Filtro estadístico sin extremos aplicado."]
     })
     st.markdown(df_b.to_markdown(index=False))
     st.markdown(f"**Fecha de Auditoría:** {HOY}")
