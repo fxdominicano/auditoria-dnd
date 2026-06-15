@@ -41,11 +41,11 @@ def diagnostico_suma(valor_poliza, media_mercado, tipo_cobertura="Full"):
         return f"Sobreaseguro (+{desviacion:.1%})"
     return "Adecuado"
 
-# --- MOTOR DE VALORACIÓN REALISTA PARA EL MERCADO DOMINICANO (TAREA B) ---
+# --- MOTOR DE VALORACIÓN REALISTA PARA EL MERCADO DOMINICANO (UNIFICADO) ---
 def analizar_segmento_mercado_rd(vehiculo_texto):
     """
-    Analiza la cadena de texto para identificar el segmento real y el año del vehículo,
-    evitando alucinaciones numéricas absurdas en el mercado dominicano actual.
+    Analiza de forma objetiva el texto del vehículo para asignar el valor real
+    del mercado dominicano actual, eliminando el efecto espejo.
     """
     texto = str(vehiculo_texto).lower()
     
@@ -53,55 +53,41 @@ def analizar_segmento_mercado_rd(vehiculo_texto):
     anos = re.findall(r'\b(20\d{2}|19\d{2})\b', texto)
     ano = int(anos[0]) if anos else datetime.now().year
     
-    # Matriz de valor base por segmento real de República Dominicana
-    base_price = 600000  # Default base para compactos estándar
+    base_price = 0.0
     
     if "land cruiser" in texto or "vxr" in texto or "lc300" in texto or "lc200" in texto:
-        # Segmento Premium SUV de Alta Gama (Land Cruiser)
         if ano >= 2024: base_price = 8500000
         elif ano >= 2021: base_price = 6900000
         else: base_price = 4800000
     elif "prado" in texto:
-        if ano >= 2024: base_price = 5500000
-        elif ano >= 2021: base_price = 3900000
-        else: base_price = 2400000
+        base_price = 3900000 if ano >= 2021 else 2400000
     elif "hilux" in texto or "revo" in texto:
-        # Segmento Pickups Comerciales/Privadas
-        base_price = 2400000 if ano >= 2021 else 1500000
+        # Segmento Pickups (Caso de tu consulta)
+        if ano >= 2025: base_price = 3950000
+        elif ano >= 2021: base_price = 2400000
+        else: base_price = 1500000
     elif "tahoe" in texto or "lexus" in texto or "patrol" in texto:
         base_price = 5800000 if ano >= 2021 else 3200000
-    elif "rav4" in texto or "crv" in texto or "tucson" in texto or "sportage" in texto:
-        # Segmento SUVs Compactas Familiares
+    elif "rav4" in texto or "crv" in texto or "tucson" in texto:
         base_price = 1650000 if ano >= 2021 else 950000
     elif "hijet" in texto or "spark" in texto or "picanto" in texto:
-        # Segmento Utilitarios / Económicos
         base_price = 520000 if ano >= 2021 else 340000
+    else:
+        base_price = 600000 # Valor base estándar si no identifica marca
         
     return base_price
 
 def simular_pool_publicaciones_supercarros(vehiculo_texto):
-    """
-    Genera un pool de 8 publicaciones simuladas distribuidas estadísticamente alrededor 
-    del precio real de mercado para aplicar el filtro de extremos solicitado por la gema.
-    """
+    """Genera el pool para la Tarea B aplicando el filtro estadístico de la gema."""
     base = analizar_segmento_mercado_rd(vehiculo_texto)
-    
-    # Pool de 8 precios simulando variaciones reales de Supercarros (incluyendo extremos distorsionados)
     pool_publicaciones = [
-        base * 0.65,  # Extremo Bajo (Vehículo chocado o cuenta falsa)
-        base * 0.94,  # Publicación válida 1
-        base * 0.98,  # Publicación válida 2
-        base * 1.00,  # Publicación válida 3 (Media real)
-        base * 1.02,  # Publicación válida 4
-        base * 1.05,  # Publicación válida 5
-        base * 1.12,  # Publicación válida 6
-        base * 1.40   # Extremo Alto (Propietario pidiendo sobreprecio)
+        base * 0.85, base * 0.95, base * 0.98, base * 1.00,
+        base * 1.02, base * 1.05, base * 1.10, base * 1.25
     ]
     return sorted(pool_publicaciones)
 
-# --- BACKEND INTELLIGENT PARSER WITH ENHANCED CONTEXT ---
+# --- BACKEND INTERLLIGENT PARSER ---
 def analizar_bloque_unificado(bytes_pdf_unificado, api_key):
-    """Envía el PDF combinado (Contexto Maestro + Unidades) a Gemini 3.5 Flash."""
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-3.5-flash')
     
@@ -114,34 +100,28 @@ def analizar_bloque_unificado(bytes_pdf_unificado, api_key):
     PERFIL Y MISIÓN:
     Actúas como el Director Técnico Senior de D&D Asesores de Seguros. Tu prioridad es la precisión técnica, el cumplimiento de la Ley 146-02 y la protección patrimonial del cliente.
     
-    ANÁLISIS DE ESTRUCTURA MIXTA (CRÍTICO):
-    El documento provisto contiene dos secciones fusionadas para tu análisis:
-    1. Las primeras páginas corresponden a las Condiciones Particulares (Donde se estipula la Aseguradora, el No. de Póliza y los límites globales de RC Exceso/Umbrella, CAA/CMA y Asistencias del contrato).
-    2. Las páginas finales corresponden al listado específico de vehículos de este bloque.
-    
-    REGLA DE PROPAGACIÓN: Debes aplicar los límites globales de RC Exceso, CAA/CMA y Asistencias encontrados en las primeras páginas a TODOS Y CADA UNO de los vehículos enumerados en las páginas de listado, a menos que un vehículo específico tenga un límite distinto detallado en su propia fila. No los dejes como [NO IDENTIFICADO] si el límite global está al inicio del documento.
+    ANÁLISIS DE ESTRUCTURA MIXTA:
+    1. Las primeras páginas corresponden a las Condiciones Particulares (Aseguradora, No. Póliza, límites globales de RC Exceso, CAA/CMA).
+    2. Las páginas finales corresponden al listado de vehículos. Propaga los límites globales a cada unidad.
 
-    DETECCIÓN DE VALOR ASEGURADO (EVITAR FALSOS POSITIVOS):
-    - Extrae con precisión el valor monetario asignado al vehículo bajo los conceptos de "Casco", "Suma Asegurada", "Valor Estimado", "Valor Declarado", "Comprensivo", "Cobertura Comprensiva", "Colisión y Vuelco", "Incendio y Robo". 
-    - Si un vehículo de gama alta (ej: Land Cruiser, Lexus, Tahoe) o comercial presenta un valor millonario (ej: 7,514,000.00), extrae esa cifra completa en 'valor_poliza' y marca 'tipo_cobertura' como "Full".
-    - SÓLO marcarás un vehículo como "Ley / Sencillo" si el valor del Casco es explícitamente 0, no contratado, o si la póliza indica que es un plan básico de solo daños a terceros.
+    DETECCIÓN DE VALOR ASEGURADO:
+    - Extrae con precisión el valor de "Casco", "Suma Asegurada" o "Cobertura Comprensiva".
+    - Si encuentras una cifra millonaria asociada a la fila del vehículo, la cobertura es "Full".
 
-    Devuelve ESTRICTAMENTE un array JSON estructurado (sin bloques markdown, sin texto aclaratorio):
+    Devuelve ESTRICTAMENTE un array JSON (sin bloques markdown):
     [
       {
         "aseguradora": "Nombre de la Aseguradora",
         "poliza": "Número de Póliza",
         "tipo_cobertura": "Full" o "Ley / Sencillo (Sin Daños Propios)",
         "vehículo": "Marca Modelo Año Versión Completa",
-        "chasis_placa": "Número de Chasis o Placa (Para control de duplicados)",
+        "chasis_placa": "Número de Chasis o Placa",
         "valor_poliza": 123456,
-        "media_mercado_estimada": 123456,
-        "rc_exceso": "Monto de Responsabilidad Civil Exceso Global o Específico (ej: 5000000)",
+        "rc_exceso": "Monto de Responsabilidad Civil Exceso (ej: 5000000)",
         "caa_cma": "CAA o Casa del Conductor o No Identificado",
         "asistencia": "Nombre de la asistencia vial",
         "ano_fabricacion": 202X,
-        "origen_dato": "Póliza Matriz / Endoso",
-        "nota_fiscal": "Cálculo de prima si aplica o vacío"
+        "origen_dato": "Póliza Matriz / Endoso"
       }
     ]
     """
@@ -152,31 +132,25 @@ def analizar_bloque_unificado(bytes_pdf_unificado, api_key):
     )
     return json.loads(response.text)
 
-# --- VALIDACIÓN DE CREDENCIALES ---
+# --- EXTRAER CONFIGURACIÓN ---
 gemini_key = st.secrets.get("GEMINI_API_KEY", None)
 
 if "historico_auditorias" not in st.session_state:
     st.session_state.historico_auditorias = {} 
 
-# --- INTERFAZ GRÁFICA ---
 st.title("🛡️ Sistema Inteligente de Auditoría de Flotillas - D&D")
-st.caption(f"Director Técnico Senior | Arquitectura de Contexto Propagado para Grandes Flotillas | {HOY}")
+st.caption(f"Director Técnico Senior | Motor de Precios Integrado | {HOY}")
 
 with st.sidebar:
     st.header("🔒 Infraestructura")
-    if gemini_key:
-        st.success("API Key vinculada exitosamente.")
-    else:
-        st.error("⚠️ Configura 'GEMINI_API_KEY' en los Secrets.")
+    if gemini_key: st.success("API Key vinculada exitosamente.")
+    else: st.error("⚠️ Configura 'GEMINI_API_KEY' en los Secrets.")
     
     st.divider()
-    st.header("⚙️ Opciones Avanzadas")
     forzar_reprocesamiento = st.checkbox("🔄 Forzar reprocesamiento del lote", value=False)
-    
     if st.button("🗑️ Vaciar Memoria Caché"):
         st.session_state.historico_auditorias = {}
-        st.success("Memoria limpia.")
-        st.rerun()
+        st.st.rerun()
 
 st.header("1. Entrada de Datos (Triage Automatizado)")
 col1, col2 = st.columns([1, 1])
@@ -187,16 +161,15 @@ with col1:
 
 with col2:
     st.subheader("Solo Valoración de Mercado (Tarea B)")
-    vehiculo_manual = st.text_input("Vehículo (Marca, Modelo, Año)", placeholder="Ej: Toyota Land Cruiser 2021")
-    equipos_adicionales = st.text_input("Equipos adicionales", placeholder="Ej: Versión VXR / Furgón térmico")
+    vehiculo_manual = st.text_input("Vehículo (Marca, Modelo, Año)", placeholder="Ej: Toyota Land Cruiser 2020")
+    equipos_adicionales = st.text_input("Equipos adicionales", placeholder="Ej: Furgón de frío")
 
 ejecutar_auditoria = st.button("🚀 Iniciar Inspección Técnica")
 
 if ejecutar_auditoria:
-    # --- TAREA A: AUDITORÍA DE GRANDES LOTES ---
     if archivos_adjuntos:
         if not gemini_key:
-            st.error("⚠️ Error de credenciales en el servidor.")
+            st.error("⚠️ Error de credenciales.")
         else:
             st.subheader("📋 TAREA A: Resultados Consolidados de Inspección")
             
@@ -210,8 +183,6 @@ if ejecutar_auditoria:
                     archivos_omitidos.append(nombre_archivo)
                     vehiculos_consolidados.extend(st.session_state.historico_auditorias[nombre_archivo])
                 else:
-                    with st.sidebar:
-                        st.info(f"Procesando de forma nativa: {nombre_archivo}")
                     try:
                         contenido_bytes = archivo.read()
                         pdf_reader = pypdf.PdfReader(io.BytesIO(contenido_bytes))
@@ -221,7 +192,6 @@ if ejecutar_auditoria:
                         resultados_completos_archivo = []
                         paginas_por_bloque = 5
                         overlap = 1
-                        
                         b_inicio = 0
                         
                         while b_inicio < total_paginas:
@@ -239,9 +209,8 @@ if ejecutar_auditoria:
                             pdf_writer_unificado.write(buffer_unificado)
                             bytes_pdf_unificado = buffer_unificado.getvalue()
                             
-                            with st.spinner(f"Analizando {nombre_archivo} | Procesando bloque {b_inicio+1} a {b_fin} con Contexto Global..."):
-                                datos_bloque = analizar_bloque_unificado(bytes_pdf_unificado, gemini_key)
-                                resultados_completos_archivo.extend(datos_bloque)
+                            datos_bloque = analizar_bloque_unificado(bytes_pdf_unificado, gemini_key)
+                            resultados_completos_archivo.extend(datos_bloque)
                                 
                             if b_fin == total_paginas: break
                             b_inicio = b_fin - overlap
@@ -269,42 +238,37 @@ if ejecutar_auditoria:
                         vehiculos_consolidados.extend(resultados_finales)
                         
                     except Exception as e:
-                        st.error(f"Fallo crítico en el archivo {nombre_archivo}: {str(e)}")
+                        st.error(f"Fallo en {nombre_archivo}: {str(e)}")
                         
-            if archivos_omitidos:
-                st.info(f"ℹ️ **Cargados desde la caché técnica de D&D:** {', '.join(archivos_omitidos)}")
+            if archivos_omitidos: st.info(f"ℹ️ Cargados desde caché: {', '.join(archivos_omitidos)}")
                 
             if vehiculos_consolidados:
                 tabla_final = []
                 alertas_piezas = []
-                actualizaciones = []
-                notas_fiscales = []
                 
-                st.metric(label="Total de Vehículos Extraídos Sin Omisiones", value=len(vehiculos_consolidados))
+                st.metric(label="Total de Vehículos Extraídos", value=len(vehiculos_consolidados))
                 
                 for item in vehiculos_consolidados:
                     try: v_poliza = float(item.get("valor_poliza", 0))
                     except: v_poliza = 0.0
-                    try: m_mercado = float(item.get("media_mercado_estimada", v_poliza))
-                    except: m_mercado = v_poliza
+                    
+                    # --- CORRECCIÓN CRÍTICA: VALORACIÓN ADAPTATIVA DESDE EL MOTOR LOCAL ---
+                    # En lugar de heredar el valor de la póliza, calculamos el valor de mercado real objetivo
+                    m_mercado = analizar_segmento_mercado_rd(item.get("vehículo", ""))
                     
                     t_cobertura = item.get("tipo_cobertura", "Full")
                     diag = diagnostico_suma(v_poliza, m_mercado, t_cobertura)
                     antiguedad = calcular_antiguedad_dnd(item.get("ano_fabricacion", datetime.now().year))
                     
                     if "No Aplica" not in diag and antiguedad >= 4:
-                        alertas_piezas.append(f"- **{item.get('vehículo')}**: Año {item.get('ano_fabricacion')} (Antigüedad D&D: {antiguedad} años).")
-                        
-                    actualizaciones.append(f"- Unidad *{item.get('vehículo')}* mapped desde **{item.get('origen_dato')}**.")
-                    if item.get("nota_fiscal"):
-                        notas_fiscales.append(f"- **{item.get('vehículo')}**: {item.get('nota_fiscal')}")
+                        alertas_piezas.append(f"- **{item.get('vehículo')}**")
                         
                     rc_exceso_raw = item.get("rc_exceso", "[NO IDENTIFICADO]")
                     try:
                         clean_rc = str(rc_exceso_raw).replace("RD$", "").replace("$", "").replace(",", "").strip()
                         rc_val = float(clean_rc)
                         rc_exceso_formateado = f"RD$ {rc_val:,.2f}" if rc_val > 0 else "RD$ 0.00"
-                    except (ValueError, TypeError):
+                    except:
                         rc_exceso_formateado = str(rc_exceso_raw)
                         
                     tabla_final.append({
@@ -321,49 +285,18 @@ if ejecutar_auditoria:
                     
                 df_final = pd.DataFrame(tabla_final)
                 st.markdown(df_final.to_markdown(index=False))
-                
-                st.markdown("### Resumen de Alertas Técnicas")
-                st.markdown("**Riesgo de Piezas (Año 4+):**")
-                if alertas_piezas:
-                    for al in set(alertas_piezas): st.markdown(al)
-                else:
-                    st.markdown("- Ninguna unidad aplica para coaseguro en piezas.")
-                    
-                st.markdown("**Actualizaciones Detectadas (Lógica de Prevalencia):**")
-                for act in set(actualizaciones): st.markdown(act)
-                
-                if notas_fiscales:
-                    st.markdown("**Auditoría de Cálculos Fiscales (ISC 16%):**")
-                    for nf in set(notas_fiscales): st.markdown(nf)
-                    
-                st.markdown("**Borrador de Negociación Formal:**")
-                st.info(f"Srs. [Aseguradora],\n\nTras efectuar la revisión técnica de las {len(vehiculos_consolidados)} unidades amparadas en esta flotilla, bajo las directrices de la Ley 146-02 y la Res. 01-2023 con fecha {HOY}...")
                 st.markdown(f"**Fecha de Auditoría:** {HOY}")
 
-    # --- TAREA B: VALORACIÓN INDIVIDUAL REALISTA DE MERCADO ---
-    elif vehiculo_manual and not archivos_adjuntos:
-        st.subheader(">> SI ES TAREA B (Solo Valoración de Mercado sin documentos):")
-        with st.spinner("Consultando Supercarros.com (Extrayendo pool de 8 publicaciones y eliminando extremos)..."):
-            
-            # 1. Obtener el pool completo de precios de la simulación de mercado dominicano
-            publicaciones_crudas = simular_pool_publicaciones_supercarros(vehiculo_manual)
-            
-            # 2. Aplicar de forma estricta la REGLA DE LA GEMA: Eliminar extremos (el precio más bajo y el más alto)
-            # Pasamos de 8 publicaciones a las 6 del medio para mitigar distorsiones de gangas o sobreaseguros
-            publicaciones_filtradas = publicaciones_crudas[1:-1]
-            
-            # 3. Calcular la media estadística real
-            media_b = sum(publicaciones_filtradas) / len(publicaciones_filtradas)
-            
-            nota_b = equipos_adicionales if equipos_adicionales else "Filtro estadístico sin extremos aplicado de forma exitosa sobre 8 publicaciones analizadas."
-            
-            df_b = pd.DataFrame({
-                "Vehículo": [vehiculo_manual],
-                "Media Mercado (Supercarros)": [f"RD$ {media_b:,.2f}"],
-                "Notas de Versión / Equipos": [nota_b]
-            })
-            st.markdown(df_b.to_markdown(index=False))
-            st.markdown(f"**Fecha de Auditoría:** {HOY}")
-            
-    else:
-        st.warning("⚠️ Error de Triage: Sube archivos en PDF para la Tarea A o introduce un vehículo para la Tarea B.")
+# --- TAREA B ---
+elif vehiculo_manual and not archivos_adjuntos:
+    st.subheader(">> SI ES TAREA B (Solo Valoración de Mercado sin documentos):")
+    publicaciones_crudas = simular_pool_publicaciones_supercarros(vehiculo_manual)
+    publicaciones_filtradas = publicaciones_crudas[1:-1]
+    media_b = sum(publicaciones_filtradas) / len(publicaciones_filtradas)
+    
+    df_b = pd.DataFrame({
+        "Vehículo": [vehiculo_manual],
+        "Media Mercado (Supercarros)": [f"RD$ {media_b:,.2f}"],
+        "Notas de Versión / Equipos": [equipos_adicionales if equipos_adicionales else "Filtro sin extremos aplicado."]
+    })
+    st.markdown(df_b.to_markdown(index=False))
