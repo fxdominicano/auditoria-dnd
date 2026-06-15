@@ -29,7 +29,7 @@ def diagnostico_suma(valor_poliza, media_mercado, tipo_cobertura="Full"):
     if "ley" in cobertura_clean or "sencillo" in cobertura_clean or "terceros" in cobertura_clean or valor_poliza == 0:
         return "No Aplica (Seguro de Ley / Sin Daños Propios)"
         
-    if media_market_eval := media_mercado == 0: 
+    if media_mercado == 0: 
         return "No Identificado"
         
     desviacion = (valor_poliza - media_mercado) / media_mercado
@@ -78,7 +78,7 @@ def analizar_bloque_pdf(bytes_bloque, api_key, num_bloque, total_bloques):
         "vehículo": "Marca Modelo Año Versión Completa o Detalles de Equipo",
         "valor_poliza": 123456,
         "media_mercado_estimada": 123456,
-        "rc_exceso": "Límite Exacto o [NO IDENTIFICADO]",
+        "rc_exceso": "Límite Exacto Numérico o [NO IDENTIFICADO]",
         "caa_cma": "CAA o Casa del Conductor o No Identificado",
         "asistencia": "Nombre de la asistencia vial",
         "ano_fabricacion": 202X,
@@ -162,13 +162,13 @@ if ejecutar_auditoria:
                         
                         resultados_archivo = []
                         paginas_por_bloque = 5
-                        bloques_totales = (total_paginas + paginas_por_bloque - 1) // paginas_por_bloque
                         
                         progreso_barra = st.progress(0)
                         status_text = st.empty()
                         
                         for idx, b_inicio in enumerate(range(0, total_paginas, paginas_por_bloque)):
                             num_bloque = idx + 1
+                            total_bloques = (total_paginas + paginas_por_bloque - 1) // paginas_por_bloque
                             status_text.text(f"Analizando {nombre_archivo} | Leyendo páginas {b_inicio+1} a {min(b_inicio+paginas_por_bloque, total_paginas)} de {total_paginas}...")
                             
                             pdf_writer = pypdf.PdfWriter()
@@ -179,11 +179,10 @@ if ejecutar_auditoria:
                             pdf_writer.write(buffer_bloque)
                             bytes_bloque = buffer_bloque.getvalue()
                             
-                            # Llamada al API por el bloque específico
-                            datos_bloque = analizar_bloque_pdf(bytes_bloque, gemini_key, num_bloque, bloques_totales)
+                            datos_bloque = analizar_bloque_pdf(bytes_bloque, gemini_key, num_bloque, total_bloques)
                             resultados_archivo.extend(datos_bloque)
                             
-                            progreso_barra.progress(num_bloque / bloques_totales)
+                            progreso_barra.progress(num_bloque / total_bloques)
                         
                         status_text.empty()
                         progreso_barra.empty()
@@ -203,7 +202,6 @@ if ejecutar_auditoria:
                 actualizaciones = []
                 notas_fiscales = []
                 
-                # Conteo CoT de control
                 st.metric(label="Total de Vehículos Inspeccionados", value=len(vehiculos_consolidados))
                 
                 for item in vehiculos_consolidados:
@@ -223,6 +221,17 @@ if ejecutar_auditoria:
                     if item.get("nota_fiscal"):
                         notas_fiscales.append(f"- **{item.get('vehículo')}**: {item.get('nota_fiscal')}")
                     
+                    # --- SOLUCIÓN AL ERROR DE NOTACIÓN CIENTÍFICA (RC EXCESO) ---
+                    rc_exceso_raw = item.get("rc_exceso", "[NO IDENTIFICADO]")
+                    try:
+                        # Limpiamos caracteres comunes por si viene parcialmente formateado
+                        clean_rc = str(rc_exceso_raw).replace("RD$", "").replace("$", "").replace(",", "").strip()
+                        rc_val = float(clean_rc)
+                        rc_exceso_formateado = f"RD$ {rc_val:,.2f}" if rc_val > 0 else "RD$ 0.00"
+                    except (ValueError, TypeError):
+                        # Si es un string de texto como "[NO IDENTIFICADO]", lo dejamos igual
+                        rc_exceso_formateado = str(rc_exceso_raw)
+                    
                     tabla_final.append({
                         "Aseguradora": item.get("aseguradora", "[NO IDENTIFICADO]"),
                         "Póliza #": item.get("poliza", "[NO IDENTIFICADO]"),
@@ -230,7 +239,7 @@ if ejecutar_auditoria:
                         "Valor Póliza": f"RD$ {v_poliza:,.2f}" if v_poliza > 0 else "RD$ 0.00 (Seguro Ley)",
                         "Media Mercado": f"RD$ {m_mercado:,.2f}" if m_mercado > 0 else "[NO IDENTIFICADO]",
                         "Diagnóstico": diag,
-                        "RC Exceso (Límite Actual)": item.get("rc_exceso", "[NO IDENTIFICADO]"),
+                        "RC Exceso (Límite Actual)": rc_exceso_formateado, # <--- Valor formateado explícito en string
                         "CAA/CMA": item.get("caa_cma", "[NO IDENTIFICADO]"),
                         "Asistencia": item.get("asistencia", "[NO IDENTIFICADO]")
                     })
