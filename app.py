@@ -6,7 +6,7 @@ import json
 import pypdf
 import io
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
+# --- CONFIGURACIÓN DE LA PÁGINA (DEBE SER LA PRIMERA INSTRUCCIÓN) ---
 st.set_page_config(
     page_title="D&D Asesores de Seguros - Auditor de Vehículos", 
     layout="wide",
@@ -17,15 +17,19 @@ st.set_page_config(
 HOY = datetime.now().strftime("%d/%m/%Y")
 
 def calcular_antiguedad_dnd(ano_fabricacion, ano_vigencia=datetime.now().year):
-    """Regla D&D: (Año Vigencia - Año Fabricación) + 1"""
+    """Regla D&D: (Año Vigilancia - Año Fabricación) + 1"""
     try:
         return (ano_vigencia - int(ano_fabricacion)) + 1
     except (ValueError, TypeError):
         return 1
 
 def diagnostico_suma(valor_poliza, media_mercado, tipo_cobertura="Full"):
-    """Diagnóstico de Suma adaptado para el mercado dominicano (±10%)."""
+    """
+    Diagnóstico de Suma adaptado para el mercado dominicano (±10%).
+    Maneja correctamente Seguros de Ley / Sencillos sin Daños Propios.
+    """
     cobertura_clean = str(tipo_cobertura).strip().lower()
+    
     if "ley" in cobertura_clean or "sencillo" in cobertura_clean or "terceros" in cobertura_clean or valor_poliza == 0:
         return "No Aplica (Seguro de Ley / Sin Daños Propios)"
         
@@ -39,9 +43,9 @@ def diagnostico_suma(valor_poliza, media_mercado, tipo_cobertura="Full"):
         return f"Sobreaseguro (+{desviacion:.1%})"
     return "Adecuado"
 
-# --- PROCESAMIENTO INDUSTRIAL POR BLOQUES (EVITA PEREZA DEL LLM) ---
+# --- PROCESAMIENTO INDUSTRIAL POR BLOQUES (CON PALABRAS CLAVE AMPLIADAS) ---
 def analizar_bloque_pdf(bytes_bloque, api_key, num_bloque, total_bloques):
-    """Envía un segmento del PDF a Gemini 3.5 Flash para asegurar lectura completa."""
+    """Envía un segmento del PDF a Gemini 3.5 Flash asegurando lectura analítica."""
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-3.5-flash')
     
@@ -55,19 +59,18 @@ def analizar_bloque_pdf(bytes_bloque, api_key, num_bloque, total_bloques):
     Actúas como el Director Técnico Senior de D&D Asesores de Seguros. Tu prioridad es la precisión técnica, el cumplimiento de la Ley 146-02 y la protección patrimonial del cliente.
     Estás analizando el bloque de páginas {num_bloque} de un total de {total_bloques} bloques de este documento.
     
-    REGLA DE FLOTILLAS [Iteración Obligatoria]: Extrae TODOS los vehículos presentes en este fragmento. No omitas ninguno.
+    REGLA DE ORO CONTRA FALSOS POSITIVOS (SEGUROS DE LEY VS FULL):
+    1. NO clasifiques un vehículo como "Seguro de Ley" sólo porque el documento mencione las frases "Límites de la Ley", "Ley 146-02" o "Responsabilidad Civil Obligatoria". Todas las pólizas dominicanas contienen estos textos.
+    2. Busca proactivamente términos de daños propios o riesgos propios como: "Casco", "Suma Asegurada", "Valor Estimado", "Valor Declarado", "Comprensivo", "Cobertura Comprensiva", "Colisión y Vuelco", "Colisión y/ Vuelco", "Incendio y Robo". 
+    3. SI ENCUENTRAS una cantidad de dinero asignada al vehículo en cualquiera de estos conceptos, la cobertura es obligatoriamente "Full" y debes extraer ese monto exacto en 'valor_poliza'.
+    4. SÓLO clasificarás como "Ley / Sencillo" si el documento especifica textualmente "Seguro de Ley Suscrito" o si las columnas de "Casco/Daños Propios/Comprensiva" están explícitamente vacías, en cero o marcadas como "No Incluida".
 
-    MAPEADO DE COBERTURA CRÍTICA:
-    - Identifica si el vehículo cuenta con cobertura "Full" o si es un seguro "Ley / Sencillo / Sólo Terceros" (Sin Daños Propios). Si es Ley, el 'valor_poliza' DEBE ser 0.
+    REGLA DE FLOTILLAS: Extrae TODOS los vehículos presentes en este fragmento sin omitir ninguno.
 
-    Mapeo de Asistencia (Sinónimos):
+    MAPEO DE EXCESO Y ASISTENCIAS:
+    - RC Auto Exceso (Patrimonial): Busca minuciosamente en las columnas de la derecha, cláusulas adicionales o páginas finales bajo los nombres "RC Exceso", "RCA Exceso", "Exceso de Límites" o "Umbrella".
     - Legal: Centro del Automovilista (CAA) o Casa del Conductor (CMA).
     - Vial: Rescate 365, Rescate Vial, Asistencia Vehicular o Asistencia Vial.
-    - RC Auto Exceso (Patrimonial): Busca "RC Exceso", "RCA", "Umbrella" o "Exceso de Límites".
-
-    METODOLOGÍA DE VALORACIÓN:
-    1. Equipos/Versiones: Detalla la versión exacta (LE, SE, LSE, etc.). En camiones identifica Furgones Refrigerados y equipos de frío.
-    2. Cálculo Fiscal: Prima Bruta = Prima Neta * 1.16 (ISC de 16%).
 
     Devuelve ESTRICTAMENTE un array JSON con los vehículos de este bloque (sin bloques markdown ni textos adicionales):
     [
@@ -221,15 +224,13 @@ if ejecutar_auditoria:
                     if item.get("nota_fiscal"):
                         notas_fiscales.append(f"- **{item.get('vehículo')}**: {item.get('nota_fiscal')}")
                     
-                    # --- SOLUCIÓN AL ERROR DE NOTACIÓN CIENTÍFICA (RC EXCESO) ---
+                    # Formateo string robusto para evitar notación científica (5e+06)
                     rc_exceso_raw = item.get("rc_exceso", "[NO IDENTIFICADO]")
                     try:
-                        # Limpiamos caracteres comunes por si viene parcialmente formateado
                         clean_rc = str(rc_exceso_raw).replace("RD$", "").replace("$", "").replace(",", "").strip()
                         rc_val = float(clean_rc)
                         rc_exceso_formateado = f"RD$ {rc_val:,.2f}" if rc_val > 0 else "RD$ 0.00"
                     except (ValueError, TypeError):
-                        # Si es un string de texto como "[NO IDENTIFICADO]", lo dejamos igual
                         rc_exceso_formateado = str(rc_exceso_raw)
                     
                     tabla_final.append({
@@ -239,7 +240,7 @@ if ejecutar_auditoria:
                         "Valor Póliza": f"RD$ {v_poliza:,.2f}" if v_poliza > 0 else "RD$ 0.00 (Seguro Ley)",
                         "Media Mercado": f"RD$ {m_mercado:,.2f}" if m_mercado > 0 else "[NO IDENTIFICADO]",
                         "Diagnóstico": diag,
-                        "RC Exceso (Límite Actual)": rc_exceso_formateado, # <--- Valor formateado explícito en string
+                        "RC Exceso (Límite Actual)": rc_exceso_formateado,
                         "CAA/CMA": item.get("caa_cma", "[NO IDENTIFICADO]"),
                         "Asistencia": item.get("asistencia", "[NO IDENTIFICADO]")
                     })
@@ -266,14 +267,14 @@ if ejecutar_auditoria:
                 st.info(f"Srs. [Aseguradora],\n\nTras efectuar la revisión técnica de las {len(vehiculos_consolidados)} unidades amparadas en esta flotilla, bajo las directrices de la Ley 146-02 y la Res. 01-2023 con fecha {HOY}...")
                 st.markdown(f"**Fecha de Auditoría:** {HOY}")
 
-    # --- TAREA B: VALORACIÓN INDIVIDUAL ---
-    elif vehiculo_manual and not archivos_adjuntos:
-        st.subheader(">> SI ES TAREA B (Solo Valoración de Mercado sin documentos):")
-        media_b = 1850000 if "2022" in vehiculo_manual else 650000
-        df_b = pd.DataFrame({
-            "Vehículo": [vehiculo_manual],
-            "Media Mercado (Supercarros)": [f"RD$ {media_b:,.2f}"],
-            "Notas de Versión / Equipos": [equipos_adicionales if equipos_adicionales else "Filtro estadístico sin extremos aplicado."]
-        })
-        st.markdown(df_b.to_markdown(index=False))
-        st.markdown(f"**Fecha de Auditoría:** {HOY}")
+# --- TAREA B: VALORACIÓN INDIVIDUAL ---
+elif vehiculo_manual and not archivos_adjuntos:
+    st.subheader(">> SI ES TAREA B (Solo Valoración de Mercado sin documentos):")
+    media_b = 1850000 if "2022" in vehiculo_manual else 650000
+    df_b = pd.DataFrame({
+        "Vehículo": [vehiculo_manual],
+        "Media Mercado (Supercarros)": [f"RD$ {media_b:,.2f}"],
+        "Notas de Versión / Equipos": [equipos_adicionales if equipos_adicionales else "Filtro estadístico sin extremos aplicado."]
+    })
+    st.markdown(df_b.to_markdown(index=False))
+    st.markdown(f"**Fecha de Auditoría:** {HOY}")
