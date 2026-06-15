@@ -6,7 +6,7 @@ import json
 import pypdf
 import io
 
-# --- CONFIGURACIÓN DE LA PÁGINA (DEBE SER LA PRIMERA INSTRUCCIÓN) ---
+# --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(
     page_title="D&D Asesores de Seguros - Auditor de Vehículos", 
     layout="wide",
@@ -17,17 +17,14 @@ st.set_page_config(
 HOY = datetime.now().strftime("%d/%m/%Y")
 
 def calcular_antiguedad_dnd(ano_fabricacion, ano_vigencia=datetime.now().year):
-    """Regla D&D: (Año Vigilancia - Año Fabricación) + 1"""
+    """Regla D&D: (Año Vigencia - Año Fabricación) + 1"""
     try:
         return (ano_vigencia - int(ano_fabricacion)) + 1
     except (ValueError, TypeError):
         return 1
 
 def diagnostico_suma(valor_poliza, media_mercado, tipo_cobertura="Full"):
-    """
-    Diagnóstico de Suma adaptado para el mercado dominicano (±10%).
-    Maneja correctamente Seguros de Ley / Sencillos sin Daños Propios.
-    """
+    """Diagnóstico de Suma adaptado para el mercado dominicano (±10%)."""
     cobertura_clean = str(tipo_cobertura).strip().lower()
     
     if "ley" in cobertura_clean or "sencillo" in cobertura_clean or "terceros" in cobertura_clean or valor_poliza == 0:
@@ -43,9 +40,9 @@ def diagnostico_suma(valor_poliza, media_mercado, tipo_cobertura="Full"):
         return f"Sobreaseguro (+{desviacion:.1%})"
     return "Adecuado"
 
-# --- PROCESAMIENTO INDUSTRIAL POR BLOQUES (CON PALABRAS CLAVE AMPLIADAS) ---
+# --- BACKEND: LLAMADA A GEMINI 3.5 FLASH CON INSTRUCCIONES ULTRA-PRECISAS ---
 def analizar_bloque_pdf(bytes_bloque, api_key, num_bloque, total_bloques):
-    """Envía un segmento del PDF a Gemini 3.5 Flash asegurando lectura analítica."""
+    """Envía un segmento del PDF a Gemini 3.5 Flash asegurando lectura analítica de Reservas."""
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-3.5-flash')
     
@@ -59,20 +56,18 @@ def analizar_bloque_pdf(bytes_bloque, api_key, num_bloque, total_bloques):
     Actúas como el Director Técnico Senior de D&D Asesores de Seguros. Tu prioridad es la precisión técnica, el cumplimiento de la Ley 146-02 y la protección patrimonial del cliente.
     Estás analizando el bloque de páginas {num_bloque} de un total de {total_bloques} bloques de este documento.
     
-    REGLA DE ORO CONTRA FALSOS POSITIVOS (SEGUROS DE LEY VS FULL):
-    1. NO clasifiques un vehículo como "Seguro de Ley" sólo porque el documento mencione las frases "Límites de la Ley", "Ley 146-02" o "Responsabilidad Civil Obligatoria". Todas las pólizas dominicanas contienen estos textos.
-    2. Busca proactivamente términos de daños propios o riesgos propios como: "Casco", "Suma Asegurada", "Valor Estimado", "Valor Declarado", "Comprensivo", "Cobertura Comprensiva", "Colisión y Vuelco", "Colisión y/ Vuelco", "Incendio y Robo". 
-    3. SI ENCUENTRAS una cantidad de dinero asignada al vehículo en cualquiera de estos conceptos, la cobertura es obligatoriamente "Full" y debes extraer ese monto exacto en 'valor_poliza'.
-    4. SÓLO clasificarás como "Ley / Sencillo" si el documento especifica textualmente "Seguro de Ley Suscrito" o si las columnas de "Casco/Daños Propios/Comprensiva" están explícitamente vacías, en cero o marcadas como "No Incluida".
+    REGLA DE ORO EVITAR FALSOS POSITIVOS (SEGUROS RESERVAS Y OTROS):
+    1. NO clasifiques un vehículo como "Seguro de Ley" sólo porque veas los textos "Límites de la Ley", "Ley 146-02" o "Responsabilidad Civil Obligatoria" en los subtítulos de la tabla.
+    2. Busca proactivamente el valor del vehículo en las columnas o filas bajo los conceptos: "Casco", "Suma Asegurada", "Valor Estimado", "Valor Declarado", "Comprensivo", "Cobertura Comprensiva", "Colisión y Vuelco", "Colisión y/ Vuelco", "Incendio y Robo".
+    3. SI ENCUENTRAS una cifra de dinero asignada (ejemplo: 7,514,000), la cobertura es obligatoriamente "Full". Extrae esa cifra exacta en 'valor_poliza' y marca 'tipo_cobertura' como "Full".
+    4. REGLA DE ALTA GAMA: Vehículos como Toyota Land Cruiser, Lexus, Tahoe, o camiones pesados, se consideran automáticamente "Full" si hay una cifra millonaria asociada en su fila. No los dejes en cero.
 
-    REGLA DE FLOTILLAS: Extrae TODOS los vehículos presentes en este fragmento sin omitir ninguno.
-
-    MAPEO DE EXCESO Y ASISTENCIAS:
-    - RC Auto Exceso (Patrimonial): Busca minuciosamente en las columnas de la derecha, cláusulas adicionales o páginas finales bajo los nombres "RC Exceso", "RCA Exceso", "Exceso de Límites" o "Umbrella".
+    MAPEADO DE EXCESO Y ASISTENCIAS:
+    - RC Auto Exceso (Patrimonial): Busca minuciosamente en las columnas de la derecha o anexos bajo los nombres "RC Exceso", "RCA Exceso", "Exceso de Límites" o "Umbrella". No omitas este valor numérico.
     - Legal: Centro del Automovilista (CAA) o Casa del Conductor (CMA).
     - Vial: Rescate 365, Rescate Vial, Asistencia Vehicular o Asistencia Vial.
 
-    Devuelve ESTRICTAMENTE un array JSON con los vehículos de este bloque (sin bloques markdown ni textos adicionales):
+    Devuelve ESTRICTAMENTE un array JSON con los vehículos encontrados en este bloque:
     [
       {{
         "aseguradora": "Nombre de la Aseguradora",
@@ -106,7 +101,7 @@ if "historico_auditorias" not in st.session_state:
 
 # --- INTERFAZ DE USUARIO ---
 st.title("🛡️ Sistema Inteligente de Auditoría de Flotillas - D&D")
-st.caption(f"Director Técnico Senior | Infraestructura de Segmentación Industrial Gemini 3.5 Flash | {HOY}")
+st.caption(f"Director Técnico Senior | Arquitectura Anti-Cortes y Segmentación Gemini 3.5 Flash | {HOY}")
 
 with st.sidebar:
     st.header("🔒 Seguridad e Infraestructura")
@@ -139,7 +134,6 @@ with col2:
 ejecutar_auditoria = st.button("🚀 Iniciar Inspección Técnica")
 
 if ejecutar_auditoria:
-    # --- TAREA A: AUDITORÍA DE GRANDES LOTES ---
     if archivos_adjuntos:
         if not gemini_key:
             st.error("⚠️ Falta API Key en el servidor.")
@@ -159,39 +153,72 @@ if ejecutar_auditoria:
                     try:
                         contenido_bytes = archivo.read()
                         
-                        # --- MOTOR DE SEGMENTACIÓN PYPDF ---
                         pdf_reader = pypdf.PdfReader(io.BytesIO(contenido_bytes))
                         total_paginas = len(pdf_reader.pages)
                         
                         resultados_archivo = []
-                        paginas_por_bloque = 5
+                        paginas_por_bloque = 6  # Tamaño optimizado de bloque
+                        overlap = 1             # 1 Página de colchón/solapamiento obligatorio
                         
+                        # Cálculo previo de bloques para la barra de progreso
+                        bloques_totales = 0
+                        temp_inicio = 0
+                        while temp_inicio < total_paginas:
+                            bloques_totales += 1
+                            temp_fin = min(temp_inicio + paginas_por_bloque, total_paginas)
+                            if temp_fin == total_paginas: break
+                            temp_inicio = temp_fin - overlap
+
                         progreso_barra = st.progress(0)
                         status_text = st.empty()
+                        num_bloque = 1
+                        b_inicio = 0
                         
-                        for idx, b_inicio in enumerate(range(0, total_paginas, paginas_por_bloque)):
-                            num_bloque = idx + 1
-                            total_bloques = (total_paginas + paginas_por_bloque - 1) // paginas_por_bloque
-                            status_text.text(f"Analizando {nombre_archivo} | Leyendo páginas {b_inicio+1} a {min(b_inicio+paginas_por_bloque, total_paginas)} de {total_paginas}...")
+                        # --- BUCLE CON SOLAPAMIENTO DE PÁGINAS ---
+                        while b_inicio < total_paginas:
+                            b_fin = min(b_inicio + paginas_por_bloque, total_paginas)
+                            status_text.text(f"Analizando {nombre_archivo} | Leyendo bloque {num_bloque}/{bloques_totales} (Pág. {b_inicio+1} a {b_fin})...")
                             
                             pdf_writer = pypdf.PdfWriter()
-                            for p_num in range(b_inicio, min(b_inicio + paginas_por_bloque, total_paginas)):
+                            for p_num in range(b_inicio, b_fin):
                                 pdf_writer.add_page(pdf_reader.pages[p_num])
                             
                             buffer_bloque = io.BytesIO()
                             pdf_writer.write(buffer_bloque)
                             bytes_bloque = buffer_bloque.getvalue()
                             
-                            datos_bloque = analizar_bloque_pdf(bytes_bloque, gemini_key, num_bloque, total_bloques)
+                            datos_bloque = analizar_bloque_pdf(bytes_bloque, gemini_key, num_bloque, bloques_totales)
                             resultados_archivo.extend(datos_bloque)
                             
-                            progreso_barra.progress(num_bloque / total_bloques)
+                            progreso_barra.progress(min(num_bloque / bloques_totales, 1.0))
+                            
+                            if b_fin == total_paginas: break
+                            b_inicio = b_fin - overlap
+                            num_bloque += 1
                         
                         status_text.empty()
                         progreso_barra.empty()
                         
-                        st.session_state.historico_auditorias[nombre_archivo] = resultados_archivo
-                        vehiculos_consolidados.extend(resultados_archivo)
+                        # --- ALGORITMO DE DEDUPLICACIÓN TÉCNICA INTELIGENTE ---
+                        vistos = {}
+                        for item in resultados_archivo:
+                            llave_unica = f"{item.get('poliza', '')}-{item.get('vehículo', '')}".strip().lower()
+                            if llave_unica not in vistos:
+                                vistos[llave_unica] = item
+                            else:
+                                # Si el duplicado tiene un valor mayor, rescatamos ese (evita el registro truncado en 0)
+                                try:
+                                    val_actual = float(item.get("valor_poliza", 0))
+                                    val_guardado = float(vistos[llave_unica].get("valor_poliza", 0))
+                                except:
+                                    val_actual = 0
+                                    val_guardado = 0
+                                if val_actual > val_guardado:
+                                    vistos[llave_unica] = item
+                        
+                        resultados_finales_archivo = list(vistos.values())
+                        st.session_state.historico_auditorias[nombre_archivo] = resultados_finales_archivo
+                        vehiculos_consolidados.extend(resultados_finales_archivo)
                         
                     except Exception as e:
                         st.error(f"Error crítico en {nombre_archivo}: {str(e)}")
@@ -224,7 +251,6 @@ if ejecutar_auditoria:
                     if item.get("nota_fiscal"):
                         notas_fiscales.append(f"- **{item.get('vehículo')}**: {item.get('nota_fiscal')}")
                     
-                    # Formateo string robusto para evitar notación científica (5e+06)
                     rc_exceso_raw = item.get("rc_exceso", "[NO IDENTIFICADO]")
                     try:
                         clean_rc = str(rc_exceso_raw).replace("RD$", "").replace("$", "").replace(",", "").strip()
